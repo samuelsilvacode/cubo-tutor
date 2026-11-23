@@ -31,6 +31,24 @@ def amostras(frame: np.ndarray) -> list[np.ndarray]:
     return out
 
 
+def uniforme(frame: np.ndarray) -> bool:
+    """Cada quadrado da grade tem uma cor só (tem um cubo encaixado ali)."""
+    desv = []
+    for x, y, w, h in grade(frame):
+        m = int(w * 0.3)
+        desv.append(frame[y + m:y + h - m, x + m:x + w - m].reshape(-1, 3).std(axis=0).mean())
+    return max(desv) < 22
+
+
+def distancias(todas, centros) -> np.ndarray:
+    return np.linalg.norm(_lab(todas)[:, None] - _lab(centros)[None], axis=2)
+
+
+def distancia(a, b) -> float:
+    la, lb = _lab([a, b])
+    return float(np.linalg.norm(la - lb))
+
+
 def cor_rapida(bgr: np.ndarray) -> str:
     """Palpite por matiz, para o preview ao vivo antes da calibração."""
     h, s, v = cv2.cvtColor(bgr.reshape(1, 1, 3), cv2.COLOR_BGR2HSV)[0, 0]

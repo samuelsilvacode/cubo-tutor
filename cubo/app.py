@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from pathlib import Path
 
 import cv2
@@ -8,6 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from . import visao
+from .correcao import corrigir
 from .camadas import resolver
 from .modelo import Cubo, ORDEM_FACES, NOME_COR, validar
 from .otimo import checar_pecas, resolver_curto, tabelas_prontas
@@ -128,6 +130,10 @@ class App:
         self.mostra_otimo = False
         self.auto = True
         self.batidas = 0
+        self.parado_desde = None
+        self.ultimo = None
+        self.corrigidos: set[int] = set()
+        self.inicio_auto = None
         if estado:
             self.cubo = Cubo.de_texto(estado)
             self.revisar()
@@ -167,12 +173,35 @@ class App:
         i = len(self.lidas)
         y = tela.t(PAINEL_X, 20, f"Escaneando face {i + 1} de 6", 28, negrito=True)
         y = tela.t(PAINEL_X, y + 10, ESCANEAR[i][1], 20, larg=LARG - PAINEL_X - 20)
-        y = tela.t(PAINEL_X, y + 15, "Encaixe a face no quadrado branco e aperte ESPAÇO.\n"
-                                     "BACKSPACE refaz a anterior · M espelha · Q sai", 17, (170, 170, 170))
+        y = tela.t(PAINEL_X, y + 15, "Encaixe a face no quadrado branco e segure parado: a captura é automática.\n"
+                                     "BACKSPACE refaz a anterior · ESPAÇO captura na hora · M espelha · Q sai",
+                   17, (170, 170, 170), larg=LARG - PAINEL_X - 20)
+        prog = self._captura_auto(amos, palpite)
+        if prog > 0:
+            cv2.rectangle(tela.img, (0, CAM_H - 12), (int(CAM_W * prog), CAM_H), (120, 220, 120), -1)
+            y = tela.t(PAINEL_X, y + 10, "Segura parado...", 20, (120, 220, 120), negrito=True)
         if self.aviso:
             tela.t(PAINEL_X, y + 15, self.aviso, 18, (80, 180, 255), larg=LARG - PAINEL_X - 20)
         faces = {f: [visao.cor_rapida(a) for a in v] for f, v in self.lidas.items()}
         desenha_net(tela.img, faces, 20, CAM_H + 20, 18)
+
+    def _captura_auto(self, amos, palpite) -> float:
+        if amos is None or not visao.uniforme(self.frame):
+            self.parado_desde = self.ultimo = None
+            return 0
+        # a face nova precisa ter um centro diferente das já lidas
+        if any(visao.distancia(amos[4], v[4]) < 15 for v in self.lidas.values()):
+            self.parado_desde = None
+            return 0
+        if palpite != self.ultimo:
+            self.ultimo, self.parado_desde = palpite, time.time()
+            return 0
+        prog = (time.time() - self.parado_desde) / 1.0
+        if prog >= 1:
+            self.parado_desde = self.ultimo = None
+            self.captura()
+            return 0
+        return prog
 
     def captura(self):
         if self.frame is None:
@@ -203,9 +232,13 @@ class App:
             nomes[ORDEM_FACES.index(f)] = VOLTA[(i + melhor) % 4]
         todas = [a for f in ORDEM_FACES for a in self.lidas[f]]
         letras = visao.classificar(todas, centros, nomes)
+        certas = corrigir(visao.distancias(todas, centros), nomes)
+        self.corrigidos = {i for i, (a, b) in enumerate(zip(letras, certas)) if a != b}
         self.ref = visao.Referencia(centros, nomes)
-        self.cubo = Cubo.de_texto("".join(letras))
+        self.cubo = Cubo.de_texto(certas)
         self.revisar()
+        if not self.erros:
+            self.inicio_auto = time.time() + 4
 
     # ---------- revisar ----------
     def revisar(self):
@@ -225,9 +258,26 @@ class App:
             for e in self.erros[:6]:
                 y = tela.t(PAINEL_X, y, "• " + e, 18, (80, 180, 255), larg=LARG - PAINEL_X - 20)
         else:
-            tela.t(PAINEL_X, y + 15, "Tudo certo, o cubo é válido.", 20, (120, 220, 120), negrito=True)
+            y = tela.t(PAINEL_X, y + 15, "Tudo certo, o cubo é válido.", 20, (120, 220, 120), negrito=True)
+        if self.corrigidos:
+            y = tela.t(PAINEL_X, y + 5, f"Corrigi sozinho {len(self.corrigidos)} adesivo(s) que a câmera leu errado "
+                                       "(marcados em amarelo).", 18, (120, 220, 255), larg=LARG - PAINEL_X - 20)
+        if self.inicio_auto and not self.erros:
+            falta = self.inicio_auto - time.time()
+            if falta <= 0:
+                self.inicio_auto = None
+                self.comecar_aula()
+                return
+            tela.t(PAINEL_X, y + 5, f"A aula começa em {int(falta) + 1}... (clique em algo para parar)", 18)
         faces = {f: self.cubo.face(f) for f in ORDEM_FACES}
-        desenha_net(tela.img, faces, *self._net_revisar())
+        x0, y0, cel = self._net_revisar()
+        desenha_net(tela.img, faces, x0, y0, cel)
+        for k in self.corrigidos:
+            f, i = ORDEM_FACES[k // 9], k % 9
+            col, lin = NET[f]
+            fx = x0 + col * (3 * cel + 6) + (i % 3) * cel
+            fy = y0 + lin * (3 * cel + 6) + (i // 3) * cel
+            cv2.rectangle(tela.img, (fx, fy), (fx + cel - 1, fy + cel - 1), (0, 230, 255), 3)
 
     def _net_revisar(self):
         return PAINEL_X, 330, 30
@@ -235,6 +285,7 @@ class App:
     def clique(self, ev, x, y, *_):
         if ev != cv2.EVENT_LBUTTONDOWN or self.modo != "revisar":
             return
+        self.inicio_auto = None
         x0, y0, cel = self._net_revisar()
         for f, (col, lin) in NET.items():
             fx, fy = x0 + col * (3 * cel + 6), y0 + lin * (3 * cel + 6)
@@ -246,6 +297,7 @@ class App:
                 k = ORDEM_FACES.index(f) * 9 + i
                 texto[k] = visao.CORES[(visao.CORES.index(texto[k]) + 1) % 6]
                 self.cubo = Cubo.de_texto("".join(texto))
+                self.corrigidos.discard(k)
                 self.revisar()
                 return
 
@@ -331,11 +383,20 @@ class App:
         if not self.auto or lida is None or self.pos >= len(self.lista):
             self.batidas = 0
             return
-        antes, depois = self.estados[self.pos].face("F"), self.estados[self.pos + 1].face("F")
-        if antes != depois and lida == depois:
+        # olha alguns giros à frente: pega quem fez vários seguidos ou um giro que não muda a frente (B)
+        atual = self.estados[self.pos].face("F")
+        alvo = None
+        for k in range(1, 5):
+            if self.pos + k >= len(self.estados):
+                break
+            f = self.estados[self.pos + k].face("F")
+            if f != atual and lida == f:
+                alvo = self.pos + k
+                break
+        if alvo is not None:
             self.batidas += 1
-            if self.batidas >= 8:
-                self.pos += 1
+            if self.batidas >= 6:
+                self.pos = alvo
                 self.batidas = 0
         else:
             self.batidas = 0
@@ -410,4 +471,5 @@ class App:
 
     def reiniciar(self):
         self.lidas, self.cubo, self.ref, self.aviso = {}, None, None, ""
+        self.corrigidos, self.inicio_auto = set(), None
         self.modo = "escanear"
