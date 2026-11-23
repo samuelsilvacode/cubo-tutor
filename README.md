@@ -47,3 +47,14 @@ Na primeira vez que a solução curta é calculada, o pacote gera umas tabelas (
 - As cores são classificadas usando os próprios centros do cubo como referência, com a restrição de 9 adesivos por cor (problema de atribuição resolvido com `scipy`).
 - Antes da aula, o estado é validado: cores repetidas, peças impossíveis, cantos torcidos, meios virados e paridade.
 - `pytest` resolve 300 embaralhamentos aleatórios para garantir que o solver sempre termina.
+
+### Vermelho, laranja e amarelo
+
+São as cores que mais confundem com webcam e luz amarelada. O que o programa faz:
+
+1. **Balanço de branco** pelo centro branco do cubo, para tirar o tom da lâmpada.
+2. Compara as cores pelo **tom** (ângulo de matiz no espaço LAB), dando pouco peso ao brilho, que muda de uma face pra outra.
+3. Usa os **centros do próprio cubo** como referência, então funciona com cubos de tons diferentes.
+4. A correção pelas peças desfaz o que ainda sobrar de erro.
+
+Para medir: `python tools/estresse_cores.py 300` simula um cubo com vermelho e laranja próximos sob luz quente e exposição variando por face. Antes dessas mudanças: 27% dos cubos lidos 100% certos (72% com correção). Depois: 96% (100% com correção).

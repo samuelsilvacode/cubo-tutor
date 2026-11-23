@@ -9,7 +9,6 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from . import visao
-from .correcao import corrigir
 from .camadas import resolver
 from .modelo import Cubo, ORDEM_FACES, NOME_COR, validar
 from .otimo import checar_pecas, resolver_curto, tabelas_prontas
@@ -41,8 +40,6 @@ DESC = {
 
 # posição de cada face na planificação (coluna, linha)
 NET = {"U": (1, 0), "L": (0, 1), "F": (1, 1), "R": (2, 1), "B": (3, 1), "D": (1, 2)}
-# com amarelo em cima, as laterais seguem essa ordem no esquema padrão
-VOLTA = "GOBR"
 
 _FONTES = {}
 
@@ -132,6 +129,7 @@ class App:
         self.batidas = 0
         self.parado_desde = None
         self.ultimo = None
+        self.travado = None
         self.corrigidos: set[int] = set()
         self.inicio_auto = None
         if estado:
@@ -188,17 +186,20 @@ class App:
     def _captura_auto(self, amos, palpite) -> float:
         if amos is None or not visao.uniforme(self.frame):
             self.parado_desde = self.ultimo = None
+            self.travado = None
             return 0
-        # a face nova precisa ter um centro diferente das já lidas
-        if any(visao.distancia(amos[4], v[4]) < 15 for v in self.lidas.values()):
-            self.parado_desde = None
-            return 0
+        # depois de capturar, só aceita outra quando a imagem mudar (cubo girou)
+        if self.travado is not None:
+            if palpite == self.travado:
+                return 0
+            self.travado = None
         if palpite != self.ultimo:
             self.ultimo, self.parado_desde = palpite, time.time()
             return 0
         prog = (time.time() - self.parado_desde) / 1.0
         if prog >= 1:
             self.parado_desde = self.ultimo = None
+            self.travado = palpite
             self.captura()
             return 0
         return prog
@@ -219,22 +220,8 @@ class App:
             self.monta_cubo()
 
     def monta_cubo(self):
-        centros = [self.lidas[f][4] for f in ORDEM_FACES]
-        lados = [ORDEM_FACES.index(f) for f in "FRBL"]
-        lab = visao._lab(centros)
-        ref = visao._lab([visao.BGR[c] for c in VOLTA])
-        melhor = min(range(4), key=lambda k: sum(
-            np.linalg.norm(lab[lados[i]] - ref[(i + k) % 4]) for i in range(4)))
-        nomes = [""] * 6
-        nomes[ORDEM_FACES.index("U")] = "Y"
-        nomes[ORDEM_FACES.index("D")] = "W"
-        for i, f in enumerate("FRBL"):
-            nomes[ORDEM_FACES.index(f)] = VOLTA[(i + melhor) % 4]
-        todas = [a for f in ORDEM_FACES for a in self.lidas[f]]
-        letras = visao.classificar(todas, centros, nomes)
-        certas = corrigir(visao.distancias(todas, centros), nomes)
+        letras, certas, self.ref = visao.ler_cubo([self.lidas[f] for f in ORDEM_FACES])
         self.corrigidos = {i for i, (a, b) in enumerate(zip(letras, certas)) if a != b}
-        self.ref = visao.Referencia(centros, nomes)
         self.cubo = Cubo.de_texto(certas)
         self.revisar()
         if not self.erros:

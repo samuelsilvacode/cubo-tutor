@@ -5,6 +5,8 @@ import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from .correcao import corrigir
+
 CORES = "WYGBRO"
 
 # BGR aproximado de cada cor, usado só para desenhar e nomear os centros
@@ -40,13 +42,8 @@ def uniforme(frame: np.ndarray) -> bool:
     return max(desv) < 22
 
 
-def distancias(todas, centros) -> np.ndarray:
-    return np.linalg.norm(_lab(todas)[:, None] - _lab(centros)[None], axis=2)
-
-
-def distancia(a, b) -> float:
-    la, lb = _lab([a, b])
-    return float(np.linalg.norm(la - lb))
+def distancias(todas, centros, wb=None) -> np.ndarray:
+    return np.linalg.norm(_lab(todas, wb)[:, None] - _lab(centros, wb)[None], axis=2)
 
 
 def cor_rapida(bgr: np.ndarray) -> str:
@@ -67,11 +64,21 @@ def cor_rapida(bgr: np.ndarray) -> str:
     return "R"
 
 
-def _lab(bgrs) -> np.ndarray:
-    arr = np.array(bgrs, dtype=np.uint8).reshape(-1, 1, 3)
-    lab = cv2.cvtColor(arr, cv2.COLOR_BGR2LAB).reshape(-1, 3).astype(float)
-    lab[:, 0] *= 0.5  # luz varia muito entre faces, pesa menos que a cor
-    return lab
+def _lab(bgrs, wb=None) -> np.ndarray:
+    """LAB com pouco peso no brilho e muito no tom (é o que separa vermelho, laranja e amarelo)."""
+    a = np.array(bgrs, float).reshape(-1, 3)
+    if wb is not None:
+        a = np.clip(a * wb, 0, 255)
+    lab = cv2.cvtColor((a / 255).astype(np.float32).reshape(-1, 1, 3), cv2.COLOR_BGR2LAB)
+    L, A, B = lab.reshape(-1, 3).astype(float).T
+    croma = np.hypot(A, B) + 1e-6
+    peso = 250 * np.minimum(croma, 25) / 25  # cor quase branca não tem tom confiável
+    return np.stack([0.25 * L, A, B, peso * A / croma, peso * B / croma], axis=1)
+
+
+def balanco_branco(branco) -> np.ndarray:
+    b = np.maximum(np.array(branco, float), 1)
+    return b.mean() / b
 
 
 def nomear_centros(centros: list[np.ndarray]) -> list[str]:
@@ -88,12 +95,9 @@ def nomear_centros(centros: list[np.ndarray]) -> list[str]:
     return out
 
 
-def classificar(todas: list[np.ndarray], centros: list[np.ndarray], nomes: list[str]) -> list[str]:
+def classificar(todas, centros, nomes, wb=None) -> list[str]:
     """Classifica os 54 adesivos usando os centros como referência, 9 de cada cor."""
-    lab = _lab(todas)
-    ref = _lab(centros)
-    dist = np.linalg.norm(lab[:, None] - ref[None], axis=2)
-    custo = np.repeat(dist, 9, axis=1)
+    custo = np.repeat(distancias(todas, centros, wb), 9, axis=1)
     lin, col = linear_sum_assignment(custo)
     out = [""] * len(todas)
     for i, j in zip(lin, col):
@@ -104,10 +108,38 @@ def classificar(todas: list[np.ndarray], centros: list[np.ndarray], nomes: list[
 class Referencia:
     """Depois do escaneamento: classifica ao vivo pelos centros calibrados."""
 
-    def __init__(self, centros: list[np.ndarray], nomes: list[str]):
-        self.ref = _lab(centros)
+    def __init__(self, centros, nomes, wb=None):
+        self.wb = wb
+        self.ref = _lab(centros, wb)
         self.nomes = nomes
 
     def cor(self, bgr: np.ndarray) -> str:
-        d = np.linalg.norm(self.ref - _lab([bgr])[0], axis=1)
+        d = np.linalg.norm(self.ref - _lab([bgr], self.wb)[0], axis=1)
         return self.nomes[int(np.argmin(d))]
+
+
+# com amarelo em cima, as laterais em volta seguem essa ordem no esquema padrão
+VOLTA = "GOBR"
+
+
+def nomes_dos_centros(centros) -> list[str]:
+    """Centros na ordem URFDLB. U é amarelo e D é branco; as laterais saem da melhor rotação de VOLTA."""
+    lab = _lab(centros)
+    ref = _lab([BGR[c] for c in VOLTA])
+    lados = [2, 1, 5, 4]  # F R B L dentro de URFDLB
+    k = min(range(4), key=lambda k: sum(np.linalg.norm(lab[lados[i]] - ref[(i + k) % 4]) for i in range(4)))
+    nomes = ["Y", "", "", "W", "", ""]
+    for i, idx in enumerate(lados):
+        nomes[idx] = VOLTA[(i + k) % 4]
+    return nomes
+
+
+def ler_cubo(faces: list[list[np.ndarray]]):
+    """faces: 6 listas de 9 amostras BGR na ordem URFDLB. Devolve (leitura crua, leitura corrigida, Referencia)."""
+    todas = [a for f in faces for a in f]
+    centros = [f[4] for f in faces]
+    wb = balanco_branco(faces[3][4])  # centro da base é branco
+    nomes = nomes_dos_centros([np.clip(np.array(c, float) * wb, 0, 255) for c in centros])
+    cruas = "".join(classificar(todas, centros, nomes, wb))
+    certas = corrigir(distancias(todas, centros, wb), nomes)
+    return cruas, certas, Referencia(centros, nomes, wb)
