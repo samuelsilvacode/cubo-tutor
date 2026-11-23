@@ -1,12 +1,4 @@
-"""Solver pelo método de camadas, do jeito que uma pessoa resolve.
-
-Ele não busca a solução mais curta: ele segue os 8 passos do iniciante e
-registra cada movimento junto com a explicação do que está acontecendo,
-para o app poder ensinar.
-
-Durante tudo o cubo fica com o amarelo em cima e o branco embaixo.
-Rotações do cubo inteiro aparecem como y / y' / y2.
-"""
+"""Solver pelo método de camadas, passo a passo, com amarelo em cima."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -65,8 +57,6 @@ class _Gravador:
         self.etapas[-1].passos.append(Passo(movs, dica))
 
 
-# ---------- utilidades de leitura ----------
-
 def _cor_frente(c: Cubo, pos, normal) -> str:
     return c.a[(pos, normal)]
 
@@ -121,8 +111,6 @@ def _canto_no_lugar(c: Cubo, pos) -> bool:
 def _testa(c: Cubo, seq: str) -> Cubo:
     return c.copia().aplica(seq.split()) if seq.strip() else c.copia()
 
-
-# ---------- etapas ----------
 
 def _margarida(g: _Gravador) -> None:
     g.etapa("Margarida",
@@ -181,7 +169,6 @@ def _cantos_brancos(g: _Gravador) -> None:
         if cantos_topo:
             cores = set(cantos_topo[0][1].values())
             outras = cores - {"W"}
-            # gira o cubo para a vaga desse canto ficar na frente-direita
             for y in SETUP_Y:
                 t = _testa(g.c, y)
                 if {t.centro("F"), t.centro("R")} == outras:
@@ -198,7 +185,6 @@ def _cantos_brancos(g: _Gravador) -> None:
                 vezes += 1
                 assert vezes <= 6
         else:
-            # canto branco preso embaixo no lugar errado
             for y in SETUP_Y:
                 t = _testa(g.c, y)
                 if not _meio_resolvido(t, (1, -1, 1)):
@@ -345,7 +331,6 @@ def _nomes(cores) -> str:
 
 
 def resolver(cubo: Cubo) -> list[Etapa]:
-    """Resolve pelo método de camadas. O cubo precisa estar com amarelo em cima."""
     if cubo.centro("U") != "Y" or cubo.centro("D") != "W":
         raise ValueError("segure o cubo com o amarelo em cima e o branco embaixo")
     g = _Gravador(cubo)

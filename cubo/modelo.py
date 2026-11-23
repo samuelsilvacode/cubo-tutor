@@ -1,12 +1,4 @@
-"""Modelo do cubo 3x3.
-
-Cada adesivo guarda sua posição 3D (x, y, z em -1..1), a direção para onde
-aponta (normal) e a cor. Girar uma camada é só rotacionar os vetores dos
-adesivos daquela camada, o que deixa o código curto e fácil de conferir.
-
-Eixos: x aponta para a direita (R), y para cima (U), z para a frente (F).
-Cores são letras: W branco, Y amarelo, G verde, B azul, R vermelho, O laranja.
-"""
+"""Modelo do cubo: cada adesivo tem posição, normal e cor. x=R, y=U, z=F."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,7 +6,6 @@ import random
 
 Vec = tuple[int, int, int]
 
-# Normal de cada face
 NORMAIS: dict[str, Vec] = {
     "U": (0, 1, 0), "D": (0, -1, 0),
     "R": (1, 0, 0), "L": (-1, 0, 0),
@@ -22,12 +13,10 @@ NORMAIS: dict[str, Vec] = {
 }
 FACE_DA_NORMAL = {v: k for k, v in NORMAIS.items()}
 
-# Ordem das faces no formato de texto padrão (Kociemba): U R F D L B
 ORDEM_FACES = "URFDLB"
 
 
 def _rot(v: Vec, eixo: str, quartos: int) -> Vec:
-    """Rotaciona v em torno do eixo, 90° por quarto, sentido anti-horário (regra da mão direita)."""
     x, y, z = v
     for _ in range(quartos % 4):
         if eixo == "x":
@@ -47,13 +36,8 @@ def _eixo_sinal(n: Vec) -> tuple[str, int]:
 
 
 def grade_da_face(face: str) -> list[tuple[Vec, Vec]]:
-    """Posições dos 9 adesivos de uma face na ordem de leitura padrão.
-
-    A ordem é a da planificação clássica: U vista de cima com F embaixo,
-    D vista de baixo com F em cima, faces laterais vistas de frente com U em cima.
-    """
+    # ordem de leitura da planificação (padrão Kociemba)
     n = NORMAIS[face]
-    # vetor "direita" e "baixo" da face como vista na planificação
     dirs = {
         "U": ((1, 0, 0), (0, 0, 1)),
         "D": ((1, 0, 0), (0, 0, -1)),
@@ -80,18 +64,14 @@ class Adesivo:
 
 class Cubo:
     def __init__(self, adesivos: dict[tuple[Vec, Vec], str]):
-        # chave (pos, normal) -> cor
         self.a = dict(adesivos)
 
-    # ---------- construção ----------
     @classmethod
     def resolvido(cls, cores: str = "YOGWRB") -> "Cubo":
-        """Cubo montado. `cores` dá a cor de U R F D L B (padrão: amarelo em cima, verde na frente)."""
         return cls.de_texto("".join(c * 9 for c in cores))
 
     @classmethod
     def de_texto(cls, s: str) -> "Cubo":
-        """Lê 54 letras na ordem U R F D L B (9 por face, ordem de leitura)."""
         s = s.replace(" ", "")
         if len(s) != 54:
             raise ValueError(f"esperava 54 adesivos, recebi {len(s)}")
@@ -123,7 +103,6 @@ class Cubo:
     def __hash__(self) -> int:
         return hash(self.texto())
 
-    # ---------- movimentos ----------
     def _gira(self, filtro, eixo: str, quartos: int) -> None:
         novo = {}
         for (pos, nor), cor in self.a.items():
@@ -134,7 +113,6 @@ class Cubo:
         self.a = novo
 
     def aplica(self, seq: str | list[str]) -> "Cubo":
-        """Aplica movimentos em notação padrão: R U R' U2, e rotações x y z."""
         movs = seq.split() if isinstance(seq, str) else seq
         for m in movs:
             base, suf = m[0], m[1:]
@@ -152,16 +130,13 @@ class Cubo:
                 raise ValueError(f"movimento desconhecido: {m}")
         return self
 
-    # ---------- consultas ----------
     def pecas(self) -> dict[Vec, dict[Vec, str]]:
-        """Agrupa adesivos por peça: posição -> {normal: cor}."""
         out: dict[Vec, dict[Vec, str]] = {}
         for (pos, nor), cor in self.a.items():
             out.setdefault(pos, {})[nor] = cor
         return out
 
     def acha(self, cores: set[str]) -> tuple[Vec, dict[Vec, str]]:
-        """Posição atual da peça (meio ou canto) com exatamente essas cores."""
         for pos, ads in self.pecas().items():
             if len(ads) == len(cores) and set(ads.values()) == cores:
                 return pos, ads
@@ -194,7 +169,6 @@ def embaralhar(n: int = 25, rng: random.Random | None = None) -> str:
 
 
 def simplifica(movs: list[str]) -> list[str]:
-    """Junta giros seguidos da mesma face (U U -> U2, U U' -> nada)."""
     pilha: list[str] = []
     q = {"": 1, "2": 2, "'": 3}
     for m in movs:
@@ -209,7 +183,6 @@ def simplifica(movs: list[str]) -> list[str]:
 
 
 def validar(cubo: Cubo) -> list[str]:
-    """Lista problemas no estado lido pela câmera (vazio = estado possível)."""
     erros = []
     cont: dict[str, int] = {}
     for c in cubo.a.values():
@@ -227,10 +200,7 @@ def validar(cubo: Cubo) -> list[str]:
     for pos, ads in cubo.pecas().items():
         if len(ads) > 1 and frozenset(ads.values()) not in esperadas:
             erros.append("peça impossível: " + "-".join(NOME_COR.get(c, c) for c in ads.values()))
-    if erros:
-        return erros
-    # paridade e torções: confere com o solver ótimo (que valida isso), se disponível
-    return []
+    return erros
 
 
 NOME_COR = {"W": "branco", "Y": "amarelo", "G": "verde", "B": "azul", "R": "vermelho", "O": "laranja"}
