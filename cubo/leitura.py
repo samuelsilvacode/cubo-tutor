@@ -10,7 +10,7 @@ from . import visao
 from .correcao import INDICE, corrigir
 from .modelo import Cubo
 
-MIN_VOTOS = 6
+MIN_VOTOS = 15
 MESMA_FACE = 20
 
 
@@ -34,12 +34,18 @@ def diferenca(a: np.ndarray, b: np.ndarray) -> float:
 
 
 class Grupo:
-    def __init__(self, leitura):
+    def __init__(self, leitura, peso=1.0):
         self.leituras = [leitura]
+        self.pesos = [peso]
 
     @property
     def media(self) -> np.ndarray:
-        return np.median(np.array(self.leituras), axis=0)
+        """Mediana das leituras, usando só a metade mais nítida quando há leituras suficientes."""
+        lei = np.array(self.leituras)
+        if len(lei) >= 6:
+            melhores = np.argsort(self.pesos)[len(lei) // 2:]
+            lei = lei[melhores]
+        return np.median(lei, axis=0)
 
     @property
     def votos(self) -> int:
@@ -50,7 +56,7 @@ class Acumulador:
     def __init__(self):
         self.grupos: list[Grupo] = []
 
-    def adiciona(self, amostras) -> Grupo:
+    def adiciona(self, amostras, peso=1.0) -> Grupo:
         a = np.array(amostras, float)
         melhor = None
         for g in self.grupos:
@@ -62,10 +68,12 @@ class Acumulador:
         if melhor and melhor[0] < MESMA_FACE:
             _, g, k = melhor
             g.leituras.append(girar(a, k))
+            g.pesos.append(peso)
             if len(g.leituras) > 40:
                 g.leituras.pop(0)
+                g.pesos.pop(0)
             return g
-        g = Grupo(a)
+        g = Grupo(a, peso)
         self.grupos.append(g)
         # descarta grupos de leitura ruim que nunca se repetiram
         if len(self.grupos) > 12:
@@ -78,7 +86,8 @@ class Acumulador:
                 for k in range(4):
                     if diferenca(girar(b.media, k), a.media) < MESMA_FACE:
                         a.leituras += [girar(x, k) for x in b.leituras]
-                        a.leituras = a.leituras[-40:]
+                        a.pesos += b.pesos
+                        a.leituras, a.pesos = a.leituras[-40:], a.pesos[-40:]
                         self.grupos.remove(b)
                         return True
         return False
@@ -142,8 +151,13 @@ def _escolhe(faces, candidatos):
         wb = visao.balanco_branco(cs[3])
         nomes_urf = [nomes[g] for g in ordem]
         certas, custo = corrigir(visao.distancias(todas, cs, wb, nomes_urf), nomes_urf, com_custo=True)
-        finais.append((custo, todas, cs, nomes_urf, wb, certas))
-    _, todas, cs, nomes_urf, wb, certas = min(finais, key=lambda x: x[0])
+        laterais_giradas = sum(giros[f] != 0 for f in (1, 2, 4, 5))  # R F L B
+        finais.append((custo, laterais_giradas, todas, cs, nomes_urf, wb, certas))
+    # às vezes duas montagens batem igualmente com as cores; aí fica a que não girou as faces laterais
+    # (quase todo mundo mostra as laterais com o amarelo em cima)
+    melhor_custo = min(f[0] for f in finais)
+    empatados = [f for f in finais if f[0] <= melhor_custo * 1.02 + 1e-6]
+    _, _, todas, cs, nomes_urf, wb, certas = min(empatados, key=lambda x: (x[1], x[0]))
     cruas = "".join(visao.classificar(todas, cs, nomes_urf, wb))
     return cruas, certas, visao.Referencia(cs, nomes_urf, wb), nomes_urf[2]
 

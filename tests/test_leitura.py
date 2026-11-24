@@ -13,7 +13,7 @@ def _sessao(k, rng):
     alvo = Cubo.resolvido().aplica(embaralhar(25, random.Random(500 + k)))
     tinta = np.array([rng.uniform(.75, 1), rng.uniform(.9, 1.05), rng.uniform(1, 1.2)])
     acc = Acumulador()
-    seq = list(ORDEM_FACES) * 3
+    seq = list(ORDEM_FACES) * 5
     random.Random(k).shuffle(seq)
     giro = {f: int(rng.integers(4)) for f in "URFDLB"}
     for f in seq:

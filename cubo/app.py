@@ -268,9 +268,12 @@ class App:
                 return
         if not self.acc.grupos:
             self.inicio_face = time.time()
-        g = self.acc.adiciona(amos)
-        # precisa de votos suficientes e de pelo menos meio segundo de leitura parada
-        if g.votos < leitura.MIN_VOTOS or time.time() - (self.inicio_face or time.time()) < 0.5:
+        g = self.acc.adiciona(amos, self.info.get("nitidez", 1.0))
+        # modo cuidadoso: muitos votos, mais de 1,2 s de leitura e cada quadradinho estável
+        if g.votos < leitura.MIN_VOTOS or time.time() - (self.inicio_face or time.time()) < 1.2:
+            return
+        if not self._estavel(g):
+            self.aviso = "Segure parado: alguns quadradinhos ainda estão oscilando."
             return
         # só confere quando a leitura estabiliza, para não reclamar de quadro solto
         problema, refazer = visao.confere_centro(pedida, g.media[4], {c: m[4] for c, m in self.lidas.items()})
@@ -285,6 +288,17 @@ class App:
         self.acc = leitura.Acumulador()
         if self.reg:
             self.reg.evento("face_lida", cor=pedida, media=[a.tolist() for a in g.media])
+
+    @staticmethod
+    def _estavel(g, minimo=0.8) -> bool:
+        """Cada um dos 9 quadradinhos deu a mesma cor em pelo menos 80% das últimas leituras."""
+        ultimas = np.array(g.leituras[-15:])
+        for i in range(9):
+            cores = [visao.cor_rapida(np.clip(a, 0, 255).astype(np.uint8)) for a in ultimas[:, i]]
+            mais = max(cores.count(c) for c in set(cores))
+            if mais / len(cores) < minimo:
+                return False
+        return True
 
     def _montar(self, faces):
         try:
