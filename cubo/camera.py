@@ -1,7 +1,9 @@
 """Leitura da webcam em paralelo: o app pega sempre o quadro mais novo, sem esperar a câmera."""
 from __future__ import annotations
 
+import json
 import threading
+from pathlib import Path
 
 import cv2
 
@@ -11,6 +13,7 @@ class Camera:
         self.cap = cv2.VideoCapture(indice, cv2.CAP_DSHOW)
         self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self._aplica_ajustes()
         self.largura = largura
         self._quadro = None
         self._numero = 0
@@ -19,6 +22,17 @@ class Camera:
         self._rodando = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+
+    def _aplica_ajustes(self):
+        """Brilho/contraste/saturação escolhidos por tools/otimizar_camera.py, se houver."""
+        arq = Path(__file__).resolve().parent.parent / "calibracao" / "camera.json"
+        if not arq.exists():
+            return
+        props = {"brilho": cv2.CAP_PROP_BRIGHTNESS, "contraste": cv2.CAP_PROP_CONTRAST,
+                 "saturacao": cv2.CAP_PROP_SATURATION}
+        for nome, valor in json.loads(arq.read_text(encoding="utf8")).items():
+            if nome in props:
+                self.cap.set(props[nome], valor)
 
     def _loop(self):
         while self._rodando:
