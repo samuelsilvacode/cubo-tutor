@@ -258,6 +258,11 @@ class App:
             else:
                 desenha_face(tela.img, ["X"] * 4 + [c] + ["X"] * 4, x0, CAM_H + 36, cel)
         if not falta and not self.montando:
+            trocados = visao.acerta_pares(self.lidas)
+            if trocados:
+                self.aviso = "Você mostrou trocado: corrigi " + " e ".join(trocados) + " sozinho."
+                if self.reg:
+                    self.reg.evento("pares_trocados", pares=trocados)
             self.montando = True
             threading.Thread(target=self._montar, args=(dict(self.lidas),), daemon=True).start()
 

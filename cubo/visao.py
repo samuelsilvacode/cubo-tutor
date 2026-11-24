@@ -191,10 +191,36 @@ def confere_centro(pedida: str, centro, lidos: dict) -> tuple[str | None, str | 
     familia = {"W": "WY", "Y": "YW", "R": "RO", "O": "OR", "G": "G", "B": "B"}[pedida]
     if vista not in familia:
         return f"O centro dessa face parece {NOME_COR[vista]}. Mostre a do centro {NOME_COR[pedida]}.", None
+    # branco/amarelo e vermelho/laranja não são comparados aqui: quem decide é acerta_pares(),
+    # depois que as duas faces do par foram lidas (decidir cedo fazia o app pedir para refazer à toa)
+    if pedida == "W" and _hsv(centro)[1] > 110:
+        return "Esse centro está colorido demais para ser branco. Mostre a do centro branco.", None
+    return None, None
+
+
+def acerta_pares(lidas: dict) -> list[str]:
+    """Com as 6 faces lidas, destroca vermelho/laranja e branco/amarelo se o usuário mostrou trocado.
+
+    Devolve a lista de pares trocados (vazia se estava tudo certo).
+    """
+    trocados = []
+    if "R" in lidas and "O" in lidas:
+        r, o = _proporcao_laranja(lidas["R"][4]), _proporcao_laranja(lidas["O"][4])
+        if r > o + 0.03:  # a "vermelha" tem claramente mais laranja que a "laranja"
+            lidas["R"], lidas["O"] = lidas["O"], lidas["R"]
+            trocados.append("vermelho e laranja")
+    if "W" in lidas and "Y" in lidas:
+        w, y = _hsv(lidas["W"][4])[1], _hsv(lidas["Y"][4])[1]
+        if w > y + 25:  # o "branco" é claramente mais colorido que o "amarelo"
+            lidas["W"], lidas["Y"] = lidas["Y"], lidas["W"]
+            trocados.append("branco e amarelo")
+    return trocados
+
+
+def _confere_par_antigo(pedida, centro, lidos):
+    from .modelo import NOME_COR
     par = {"W": "Y", "Y": "W", "R": "O", "O": "R"}.get(pedida)
     if par is None or par not in lidos:
-        if pedida == "W" and _hsv(centro)[1] > 110:
-            return "Esse centro está colorido demais para ser branco. Mostre a do centro branco.", None
         return None, None
     if pedida in "WY":
         sat_nova, sat_par = _hsv(centro)[1], _hsv(lidos[par])[1]
