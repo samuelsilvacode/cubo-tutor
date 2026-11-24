@@ -111,33 +111,28 @@ def _nomeacoes(centros, quantas=6):
     return opcoes[:quantas]
 
 
-def montar(faces: list[np.ndarray]):
-    """faces: 6 médias (9x3 BGR), em qualquer ordem e giradas de qualquer jeito.
+def _giros_provaveis(faces, centros, nomes):
+    """Para uma nomeação dos centros, os giros das faces que fazem mais peças existirem."""
+    wb = visao.balanco_branco(centros[nomes.index("W")])
+    todas = [x for f in faces for x in f]
+    perto = visao.distancias(todas, centros, wb).argmin(axis=1)
+    letras = [[nomes[j] for j in perto[g * 9:(g + 1) * 9]] for g in range(6)]
+    giradas = [[girar(np.array(letras[g]).reshape(9, 1), k).reshape(9).tolist() for k in range(4)]
+               for g in range(6)]
+    onde = {POSICAO[nomes[g]]: g for g in range(6)}
+    ordem = [onde[f] for f in "URFDLB"]
+    pontuados = []
+    for giros in product(range(4), repeat=6):
+        texto = [c for f, g in enumerate(ordem) for c in giradas[g][giros[f]]]
+        pontuados.append((sum(frozenset(texto[i] for i in p) in VALIDAS for p in PECAS), giros))
+    top = max(p for p, _ in pontuados)
+    # empates vão todos para o desempate pela correção
+    return [(p, nomes, ordem, g) for p, g in pontuados if p == top][:8]
 
-    Devolve (leitura crua, leitura corrigida, Referencia, cor do centro da frente).
-    """
-    centros = [f[4] for f in faces]
-    todas_g = [x for f in faces for x in f]
-    candidatos = []
-    for _, nomes in _nomeacoes(centros):
-        wb = visao.balanco_branco(centros[nomes.index("W")])
-        perto = visao.distancias(todas_g, centros, wb).argmin(axis=1)
-        letras = [[nomes[j] for j in perto[g * 9:(g + 1) * 9]] for g in range(6)]
-        giradas = [[girar(np.array(letras[g]).reshape(9, 1), k).reshape(9).tolist() for k in range(4)]
-                   for g in range(6)]
-        onde = {POSICAO[nomes[g]]: g for g in range(6)}
-        ordem = [onde[f] for f in "URFDLB"]
-        pontuados = []
-        for giros in product(range(4), repeat=6):
-            texto = [c for f, g in enumerate(ordem) for c in giradas[g][giros[f]]]
-            pontos = sum(frozenset(texto[i] for i in p) in VALIDAS for p in PECAS)
-            pontuados.append((pontos, giros))
-        top = max(p for p, _ in pontuados)
-        # empates vão todos para o desempate pela correção
-        candidatos += [(p, nomes, ordem, g) for p, g in pontuados if p == top][:8]
 
-    finais = []
+def _escolhe(faces, candidatos):
     top = max(c[0] for c in candidatos)
+    finais = []
     for pontos, nomes, ordem, giros in candidatos:
         if pontos < top:
             continue
@@ -151,3 +146,19 @@ def montar(faces: list[np.ndarray]):
     _, todas, cs, nomes_urf, wb, certas = min(finais, key=lambda x: x[0])
     cruas = "".join(visao.classificar(todas, cs, nomes_urf, wb))
     return cruas, certas, visao.Referencia(cs, nomes_urf, wb), nomes_urf[2]
+
+
+def montar(faces: list[np.ndarray]):
+    """6 médias (9x3 BGR) sem nome, em qualquer ordem e giradas de qualquer jeito."""
+    centros = [f[4] for f in faces]
+    candidatos = []
+    for _, nomes in _nomeacoes(centros):
+        candidatos += _giros_provaveis(faces, centros, nomes)
+    return _escolhe(faces, candidatos)
+
+
+def montar_com_nomes(faces: dict[str, np.ndarray]):
+    """Faces já com a cor do centro dita pelo usuário (leitura guiada)."""
+    nomes = list(faces)
+    lista = [faces[c] for c in nomes]
+    return _escolhe(lista, _giros_provaveis(lista, [f[4] for f in lista], nomes))

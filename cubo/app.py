@@ -30,6 +30,8 @@ DESC = {
     "y2": "meia volta no cubo inteiro",
 }
 
+PEDIR = "WYGBRO"
+
 # posição de cada face na planificação (coluna, linha)
 NET = {"U": (1, 0), "L": (0, 1), "F": (1, 1), "R": (2, 1), "B": (3, 1), "D": (1, 2)}
 
@@ -110,6 +112,7 @@ class App:
         self.espelho = True
         self.frame = None
         self.acc = leitura.Acumulador()
+        self.lidas: dict[str, np.ndarray] = {}
         self.montando = False
         self.resultado = None
         self.frente = None
@@ -190,34 +193,67 @@ class App:
             return
         amos, pts = self.ler_face()
         cores = [visao.cor_rapida(a) for a in amos] if amos else None
-        if amos and not self.montando:
-            self.acc.adiciona(amos)
         self.desenha_camera(tela, pts, cores)
         larg = LARG - PAINEL_X - 20
-        prontas = self.acc.prontas()
-        y = tela.t(PAINEL_X, 20, f"Mostre as 6 faces ({prontas} de 6)", 28, negrito=True)
-        y = tela.t(PAINEL_X, y + 10, "Em qualquer ordem e girando o cubo como quiser na frente da câmera. "
-                                     "O programa descobre sozinho onde fica cada face.", 20, larg=larg)
-        y = tela.t(PAINEL_X, y + 10, "BACKSPACE recomeça · M espelha · Q sai", 16, (150, 150, 150))
+        falta = [c for c in PEDIR if c not in self.lidas]
+        pedida = falta[0] if falta else None
+        if amos and pedida and not self.montando:
+            self._le_pedida(np.array(amos, float), pedida)
+
+        y = 20
+        if pedida:
+            y = tela.t(PAINEL_X, 20, f"Face {len(self.lidas) + 1} de 6", 20, (170, 170, 170))
+            y = tela.t(PAINEL_X, y + 4, f"Mostre a face com o centro {NOME_COR[pedida].upper()}", 28,
+                       negrito=True, larg=larg)
+            cv2.rectangle(tela.img, (PAINEL_X, y + 10), (PAINEL_X + 70, y + 80), visao.BGR[pedida], -1)
+            cv2.rectangle(tela.img, (PAINEL_X, y + 10), (PAINEL_X + 70, y + 80), (0, 0, 0), 3)
+            prog = min(1.0, max((g.votos for g in self.acc.grupos), default=0) / leitura.MIN_VOTOS)
+            cv2.rectangle(tela.img, (PAINEL_X + 90, y + 40), (PAINEL_X + 90 + int(300 * prog), y + 56), (120, 220, 120), -1)
+            cv2.rectangle(tela.img, (PAINEL_X + 90, y + 40), (PAINEL_X + 390, y + 56), (90, 90, 90), 1)
+            y = tela.t(PAINEL_X, y + 95, "Pode girar a face como quiser, só o centro importa.\n"
+                                         "BACKSPACE refaz a anterior · M espelha · Q sai", 17, (170, 170, 170), larg=larg)
         if self.aviso:
             y = tela.t(PAINEL_X, y + 10, self.aviso, 18, (80, 180, 255), larg=larg)
         if self.montando:
             tela.t(PAINEL_X, y + 15, "Montando o cubo...", 22, (120, 220, 120), negrito=True)
         cel = 22
-        for i, g in enumerate(self.acc.faces()):
+        for i, c in enumerate(PEDIR):
             x0 = 20 + i * (3 * cel + 40)
-            desenha_face(tela.img, [visao.cor_rapida(a.astype(np.uint8)) for a in g.media], x0, CAM_H + 30, cel)
-            prog = min(1.0, g.votos / leitura.MIN_VOTOS)
-            cor = (120, 220, 120) if prog >= 1 else (0, 200, 255)
-            cv2.rectangle(tela.img, (x0, CAM_H + 30 + 3 * cel + 8), (x0 + int(3 * cel * prog), CAM_H + 30 + 3 * cel + 16), cor, -1)
-        if prontas == 6 and not self.montando:
+            tela.t(x0, CAM_H + 12, NOME_COR[c], 15, (170, 170, 170))
+            if c in self.lidas:
+                desenha_face(tela.img, [visao.cor_rapida(a.astype(np.uint8)) for a in self.lidas[c]],
+                             x0, CAM_H + 36, cel, (60, 200, 60))
+            else:
+                desenha_face(tela.img, ["X"] * 4 + [c] + ["X"] * 4, x0, CAM_H + 36, cel)
+        if not falta and not self.montando:
             self.montando = True
-            faces = [g.media for g in self.acc.faces()]
-            threading.Thread(target=self._montar, args=(faces,), daemon=True).start()
+            threading.Thread(target=self._montar, args=(dict(self.lidas),), daemon=True).start()
+
+    def _le_pedida(self, amos, pedida):
+        for cor, media in self.lidas.items():
+            if any(leitura.diferenca(leitura.girar(amos, k), media) < leitura.MESMA_FACE for k in range(4)):
+                self.aviso = f"Essa é a face {NOME_COR[cor]}, que já foi lida. Mostre a do centro {NOME_COR[pedida]}."
+                return
+        g = self.acc.adiciona(amos)
+        if g.votos < leitura.MIN_VOTOS:
+            return
+        # só confere quando a leitura estabiliza, para não reclamar de quadro solto
+        problema, refazer = visao.confere_centro(pedida, g.media[4], {c: m[4] for c, m in self.lidas.items()})
+        if problema:
+            self.aviso = problema
+            self.acc = leitura.Acumulador()
+            if refazer:
+                self.lidas.pop(refazer, None)
+            return
+        self.aviso = ""
+        self.lidas[pedida] = g.media
+        self.acc = leitura.Acumulador()
+        if self.reg:
+            self.reg.evento("face_lida", cor=pedida, media=[a.tolist() for a in g.media])
 
     def _montar(self, faces):
         try:
-            self.resultado = leitura.montar(faces)
+            self.resultado = leitura.montar_com_nomes(faces)
         except Exception as e:
             self.resultado = e
 
@@ -225,12 +261,12 @@ class App:
         res, self.resultado, self.montando = self.resultado, None, False
         if isinstance(res, Exception):
             self.aviso = f"Não consegui montar ({res}). Mostre as faces de novo."
-            self.acc = leitura.Acumulador()
+            self.acc, self.lidas = leitura.Acumulador(), {}
             return
         cruas, certas, self.ref, self.frente = res
         if self.reg:
             self.reg.evento("montagem", cruas=cruas, certas=certas,
-                            medias=[[a.tolist() for a in g.media] for g in self.acc.faces()])
+                            medias={c: [a.tolist() for a in m] for c, m in self.lidas.items()})
         self.corrigidos = {i for i, (a, b) in enumerate(zip(cruas, certas)) if a != b}
         self.cubo = Cubo.de_texto(certas)
         self.revisar()
@@ -443,8 +479,10 @@ class App:
             if self.reg:
                 self.info["modo"] = self.modo
                 if self.modo == "escanear":
+                    self.info["pedida"] = next((c for c in PEDIR if c not in self.lidas), None)
                     self.info["grupos"] = [{"votos": g.votos, "cores": "".join(
                         visao.cor_rapida(a.astype(np.uint8)) for a in g.media)} for g in self.acc.faces()]
+                    self.info["lidas"] = "".join(self.lidas)
                 self.reg.quadro(self.info, img, self.frame)
             k = cv2.waitKeyEx(15)
             if self.fim and time.time() > self.fim:
@@ -466,8 +504,9 @@ class App:
         if c == "m":
             self.espelho = not self.espelho
         if self.modo == "escanear":
-            if k == 8:
-                self.reiniciar()
+            if k == 8 and self.lidas:
+                self.lidas.pop(list(self.lidas)[-1])
+                self.acc, self.aviso = leitura.Acumulador(), ""
         elif self.modo == "revisar":
             if k == 13:
                 self.comecar_aula()
@@ -493,6 +532,7 @@ class App:
         if self.reg:
             self.reg.evento("reinicio")
         self.acc, self.cubo, self.ref, self.aviso = leitura.Acumulador(), None, None, ""
+        self.lidas = {}
         self.montando, self.resultado = False, None
         self.corrigidos, self.inicio_auto = set(), None
         self.modo = "escanear"

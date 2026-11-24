@@ -6,7 +6,7 @@ Enquanto você mexe no cubo, a câmera confere a face da frente e avança sozinh
 
 ## Como funciona
 
-1. **Escanear**: vá mostrando as faces para a câmera, em qualquer ordem e sem precisar ficar parado. O programa acha o cubo na imagem, fotografa o tempo todo e junta as leituras de cada face.
+1. **Escanear**: o programa pede uma face por vez pelo centro ("mostre a face com o centro azul"). Pode girar a face como quiser. Ele confere se o centro é mesmo o pedido e avisa se não for; vermelho/laranja e branco/amarelo são comparados entre si, porque a webcam confunde.
 2. **Conferir**: o programa monta a planificação e corrige sozinho leituras impossíveis (escolhe o cubo válido mais parecido com o que a câmera viu). A aula começa sozinha; se quiser, clique numa cor para trocar.
 3. **Aula**: 8 etapas do método de camadas, cada uma com o objetivo, a dica do passo atual, o giro e o porquê dele funcionar.
 
@@ -29,8 +29,8 @@ Na primeira vez que a solução curta é calculada, o pacote gera umas tabelas (
 
 | Tela | Tecla | Ação |
 |---|---|---|
-| Escanear | (nada) | só ir mostrando as faces |
-| | BACKSPACE | recomeça a leitura |
+| Escanear | (nada) | mostrar a face pedida |
+| | BACKSPACE | refaz a face anterior |
 | Conferir | clique | troca a cor do quadrado |
 | | ENTER | começa a aula |
 | Aula | → / ESPAÇO, ← | próximo / anterior |

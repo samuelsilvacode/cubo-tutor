@@ -2,7 +2,7 @@ import random
 
 import numpy as np
 
-from cubo.leitura import Acumulador, girar, montar
+from cubo.leitura import Acumulador, girar, montar, montar_com_nomes
 from cubo.modelo import Cubo, ORDEM_FACES, embaralhar
 
 REAL = {"W": (215, 220, 215), "Y": (35, 185, 230), "G": (70, 150, 25),
@@ -34,4 +34,20 @@ def test_faces_em_qualquer_ordem_e_giradas():
         assert acc.prontas() == 6
         _, certas, _, _ = montar([g.media for g in acc.faces()])
         certos += any(Cubo.de_texto(certas) == alvo.copia().aplica(y) for y in ["", "y", "y2", "y'"])
+    assert certos >= 24
+
+
+def test_leitura_guiada_pelo_centro():
+    rng = np.random.default_rng(3)
+    certos = 0
+    for k in range(25):
+        alvo = Cubo.resolvido().aplica(embaralhar(25, random.Random(900 + k)))
+        tinta = np.array([rng.uniform(.75, 1), rng.uniform(.9, 1.05), rng.uniform(1, 1.2)])
+        faces = {}
+        for f in ORDEM_FACES:
+            v = np.array([REAL[c] for c in alvo.face(f)], float) * tinta * rng.uniform(.85, 1.15)
+            v = np.clip(v * rng.uniform(.95, 1.05, (9, 1)) + rng.normal(0, 5, (9, 3)), 0, 255)
+            faces[alvo.centro(f)] = girar(v, int(rng.integers(4)))
+        _, certas, _, _ = montar_com_nomes(dict(sorted(faces.items())))
+        certos += Cubo.de_texto(certas) == alvo
     assert certos >= 24

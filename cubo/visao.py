@@ -150,3 +150,45 @@ def ler_cubo(faces: list[list[np.ndarray]]):
     cruas = "".join(classificar(todas, centros, nomes, wb))
     certas = corrigir(distancias(todas, centros, wb), nomes)
     return cruas, certas, Referencia(centros, nomes, wb)
+
+
+def _hsv(bgr):
+    return cv2.cvtColor(np.clip(np.array(bgr, float), 0, 255).astype(np.uint8).reshape(1, 1, 3),
+                        cv2.COLOR_BGR2HSV)[0, 0].astype(float)
+
+
+def _quanto_laranja(bgr) -> float:
+    b, g, r = np.array(bgr, float)
+    return (g - b) / max(r, 1)
+
+
+def confere_centro(pedida: str, centro, lidos: dict) -> tuple[str | None, str | None]:
+    """Confere se o centro mostrado é da cor pedida.
+
+    Devolve (mensagem de problema ou None, cor já lida que precisa ser refeita ou None).
+    Branco/amarelo e vermelho/laranja são comparados entre si, porque a câmera confunde.
+    """
+    from .modelo import NOME_COR
+    vista = cor_rapida(np.clip(np.array(centro), 0, 255).astype(np.uint8))
+    familia = {"W": "WY", "Y": "YW", "R": "RO", "O": "OR", "G": "G", "B": "B"}[pedida]
+    if vista not in familia:
+        return f"O centro dessa face parece {NOME_COR[vista]}. Mostre a do centro {NOME_COR[pedida]}.", None
+    par = {"W": "Y", "Y": "W", "R": "O", "O": "R"}.get(pedida)
+    if par is None or par not in lidos:
+        if pedida == "W" and _hsv(centro)[1] > 110:
+            return "Esse centro está colorido demais para ser branco. Mostre a do centro branco.", None
+        return None, None
+    if pedida in "WY":
+        sat_nova, sat_par = _hsv(centro)[1], _hsv(lidos[par])[1]
+        mais_colorido = sat_nova > sat_par
+        if (pedida == "Y") != mais_colorido or abs(sat_nova - sat_par) < 25:
+            return (f"Esse centro não parece {NOME_COR[pedida]}: está muito parecido com o "
+                    f"{NOME_COR[par]} que você já mostrou. Talvez os dois estejam trocados: "
+                    f"mostre de novo a do centro {NOME_COR[par]}."), par
+        return None, None
+    lar_nova, lar_par = _quanto_laranja(centro), _quanto_laranja(lidos[par])
+    if (pedida == "O") != (lar_nova > lar_par):
+        return (f"Esse centro parece mais {NOME_COR[par]} do que {NOME_COR[pedida]}, comparando com a face "
+                f"que você mostrou antes. Talvez as duas estejam trocadas: mostre de novo a do centro "
+                f"{NOME_COR[par]}."), par
+    return None, None
