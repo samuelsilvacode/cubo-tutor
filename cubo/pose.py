@@ -81,6 +81,8 @@ class Rastreador:
         self.mao = 0.0
         self.pontos_debug = None
         self.ult_busca = 0.0
+        self.historico: list = []
+        self.prever = True
 
     # ---------- pose pela grade ----------
     def identifica(self, lida: list[str], cubo: Cubo):
@@ -177,8 +179,9 @@ class Rastreador:
             self.pontos_debug = (uv / ESCALA, np.where(lido == alvo, 1, np.where(lido >= 0, -1, 0)))
         if contam < 10:
             return -1.0, 0
-        # nota só sobre o que dá pra ver (sem mão e sem fundo)
-        return (bate - 0.5 * erra) / contam, contam
+        # nota sobre o que dá pra ver (sem mão e sem fundo), mas sem premiar pose que "some" com o cubo:
+        # se quase nada conta, divide pelo menos por 60% dos pontos projetados
+        return (bate - 0.5 * erra) / max(contam, 0.6 * len(alvo)), contam
 
     def buscar(self, frame, cubo: Cubo, ref: visao.Referencia, mao=None, maos_pts=()) -> bool:
         """Acha o cubo do zero, sem face de frente: procura perto da mão e testa várias rotações."""
@@ -266,11 +269,20 @@ class Rastreador:
     def pelo_modelo(self, frame, cubo: Cubo, ref: visao.Referencia, mao=None) -> bool:
         if self.R_cam is None:
             return False
-        mapa = self._mapa_cores(frame, ref, mao, self._janela(frame, self.R_cam, self.t))
+        partidas = [(self.R_cam, self.t.copy())]
+        prevista = self._prevista() if self.prever else None
+        if prevista is not None:
+            partidas.append(prevista)
+        # janela que cobre onde o cubo estava e onde ele deve estar agora
+        jan = [self._janela(frame, R0, t0) for R0, t0 in partidas]
+        janela = (min(j[0] for j in jan), min(j[1] for j in jan), max(j[2] for j in jan), max(j[3] for j in jan))
+        mapa = self._mapa_cores(frame, ref, mao, janela)
         idx = {c: i for i, c in enumerate(ref.nomes)}
         esperado = np.array([idx.get(c, -2) for c in cubo.texto()])[ADESIVO]
         K = _camera(frame.shape[:2])
-        R, t, nota = self._refina(self.R_cam, self.t.copy(), mapa, esperado, K)
+        # ajusta a partir da última pose e da prevista; fica com o que encaixar melhor no fim
+        R, t, nota = max((self._refina(R0, t0.copy(), mapa, esperado, K) for R0, t0 in partidas),
+                         key=lambda x: x[2])
         self._nota(R, t, mapa, esperado, K, guardar=True)
         self.qualidade = nota
         if nota < 0.35:
@@ -278,12 +290,27 @@ class Rastreador:
         self.R_cam, self.t, self.fonte = _ortonormal(R), t, "modelo"
         return True
 
+    def _prevista(self):
+        """Pose prevista para agora, seguindo a velocidade dos dois últimos quadros."""
+        if len(self.historico) < 2:
+            return None
+        (_, R0, p0), (_, R1, p1) = self.historico[-2:]
+        # a câmera entrega quadros em intervalos regulares: prevê um quadro adiante
+        giro = cv2.Rodrigues(R1 @ R0.T)[0].ravel()
+        if np.linalg.norm(giro) > np.radians(60):
+            return None  # salto grande demais: provavelmente erro, não movimento
+        return cv2.Rodrigues(giro)[0] @ R1, p1 + (p1 - p0)
+
     # ---------- um quadro ----------
     def atualiza(self, frame, centros, lida, cubo: Cubo, ref, espelho=False, mao=None, maos_pts=()) -> bool:
         ok = False
         if centros is not None and lida is not None:
             ok = self.pela_grade(centros, lida, cubo, frame.shape[:2])
         ok = self.pelo_modelo(frame, cubo, ref, mao) or ok
+        if ok:
+            self.historico = (self.historico + [(time.time(), self.R_cam.copy(), self.t.copy())])[-2:]
+        else:
+            self.historico = []
         if not ok:
             # perdeu (ou nunca achou): busca do zero, no máximo umas 4 vezes por segundo
             agora = time.time()
