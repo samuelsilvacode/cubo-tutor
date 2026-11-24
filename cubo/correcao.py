@@ -36,7 +36,7 @@ class _Pecas:
         self.cor_meio = [tuple(ref.a[(p, n)] for n in _ordem_meio(p)) for p in self.meios]
 
 
-def corrigir(dist: np.ndarray, nomes: list[str]) -> str:
+def corrigir(dist: np.ndarray, nomes: list[str], com_custo: bool = False):
     """dist[i, j]: distância do adesivo i (ordem URFDLB) ao centro j. Devolve as 54 letras."""
     pc = _Pecas(nomes)
     col = {c: j for j, c in enumerate(nomes)}
@@ -102,7 +102,10 @@ def corrigir(dist: np.ndarray, nomes: list[str]) -> str:
     for s, p in enumerate(pc.meios):
         for n, c in zip(_ordem_meio(p), gira(pc.cor_meio[perm_m[s]], ori_m[s])):
             letras[INDICE[(p, n)]] = c
-    return "".join(letras)
+    texto = "".join(letras)
+    if com_custo:
+        return texto, float(sum(dist[i, col[c]] for i, c in enumerate(texto)))
+    return texto
 
 
 def _paridade(perm) -> int:

@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from . import visao
+from . import detector, leitura, visao
 from .camadas import resolver
 from .modelo import Cubo, ORDEM_FACES, NOME_COR, validar
 from .otimo import checar_pecas, resolver_curto, tabelas_prontas
@@ -16,15 +16,6 @@ from .otimo import checar_pecas, resolver_curto, tabelas_prontas
 LARG, ALT = 1360, 720
 CAM_W, CAM_H = 800, 450
 PAINEL_X = CAM_W + 20
-
-ESCANEAR = [
-    ("F", "Amarelo em cima. Mostre uma face lateral: ela vai ser a FRENTE."),
-    ("R", "Gire o cubo inteiro pra esquerda (a face da direita vem pra câmera)."),
-    ("B", "Gire de novo pra esquerda."),
-    ("L", "Gire de novo pra esquerda."),
-    ("U", "Gire mais uma vez (volta a frente) e incline o TOPO amarelo pra câmera, com a frente embaixo."),
-    ("D", "Volte e incline a BASE branca pra câmera, com a frente em cima."),
-]
 
 DESC = {
     "R": "direita sobe", "R'": "direita desce", "R2": "direita 2 vezes",
@@ -116,7 +107,10 @@ class App:
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.espelho = True
         self.frame = None
-        self.lidas: dict[str, list[np.ndarray]] = {}
+        self.acc = leitura.Acumulador()
+        self.montando = False
+        self.resultado = None
+        self.frente = None
         self.ref: visao.Referencia | None = None
         self.cubo: Cubo | None = None
         self.erros: list[str] = []
@@ -127,9 +121,6 @@ class App:
         self.mostra_otimo = False
         self.auto = True
         self.batidas = 0
-        self.parado_desde = None
-        self.ultimo = None
-        self.travado = None
         self.corrigidos: set[int] = set()
         self.inicio_auto = None
         if estado:
@@ -146,85 +137,91 @@ class App:
         self.frame = fr
         return fr
 
-    def desenha_camera(self, tela: Tela, cores_grade=None):
+    def ler_face(self):
+        """Face vista agora: pelo detector ou, se ele não achar, pelo quadrado fixo."""
+        if self.frame is None:
+            return None, None
+        f = detector.achar_face(self.frame)
+        if f is not None and detector.nitidez(self.frame, f) > 40:
+            return f.amostras(self.frame), f.centros
+        if visao.uniforme(self.frame):
+            amos = visao.amostras(self.frame)
+            if visao.parece_face(amos):
+                pts = np.array([(x + w / 2, y + h / 2) for x, y, w, h in visao.grade(self.frame)])
+                return amos, pts
+        return None, None
+
+    def desenha_camera(self, tela: Tela, pontos=None, cores=None):
         fr = self.frame
         if fr is None:
             cv2.rectangle(tela.img, (0, 0), (CAM_W, CAM_H), (45, 45, 45), -1)
             tela.t(20, 20, "sem câmera")
             return
         vis = cv2.flip(fr, 1) if self.espelho else fr.copy()
-        for i, (x, y, w, h) in enumerate(visao.grade(fr)):
+        for x, y, w, h in visao.grade(fr):
             if self.espelho:
                 x = fr.shape[1] - x - w
-            cv2.rectangle(vis, (x, y), (x + w, y + h), (255, 255, 255), 3)
-            if cores_grade:
-                c = visao.BGR[cores_grade[i]]
-                cv2.rectangle(vis, (x + w // 2 - 18, y + h // 2 - 18), (x + w // 2 + 18, y + h // 2 + 18), c, -1)
-                cv2.rectangle(vis, (x + w // 2 - 18, y + h // 2 - 18), (x + w // 2 + 18, y + h // 2 + 18), (0, 0, 0), 2)
+            cv2.rectangle(vis, (x, y), (x + w, y + h), (150, 150, 150), 1)
+        if pontos is not None and cores:
+            for (x, y), c in zip(pontos, cores):
+                if self.espelho:
+                    x = fr.shape[1] - x
+                cv2.circle(vis, (int(x), int(y)), 22, visao.BGR[c], -1, cv2.LINE_AA)
+                cv2.circle(vis, (int(x), int(y)), 22, (0, 0, 0), 3, cv2.LINE_AA)
         tela.img[:CAM_H, :CAM_W] = cv2.resize(vis, (CAM_W, CAM_H))
 
     # ---------- escanear ----------
     def tela_escanear(self, tela: Tela):
-        amos = visao.amostras(self.frame) if self.frame is not None else None
-        palpite = [visao.cor_rapida(a) for a in amos] if amos else None
-        self.desenha_camera(tela, palpite)
-        i = len(self.lidas)
-        y = tela.t(PAINEL_X, 20, f"Escaneando face {i + 1} de 6", 28, negrito=True)
-        y = tela.t(PAINEL_X, y + 10, ESCANEAR[i][1], 20, larg=LARG - PAINEL_X - 20)
-        y = tela.t(PAINEL_X, y + 15, "Encaixe a face no quadrado branco e segure parado: a captura é automática.\n"
-                                     "BACKSPACE refaz a anterior · ESPAÇO captura na hora · M espelha · Q sai",
-                   17, (170, 170, 170), larg=LARG - PAINEL_X - 20)
-        prog = self._captura_auto(amos, palpite)
-        if prog > 0:
-            cv2.rectangle(tela.img, (0, CAM_H - 12), (int(CAM_W * prog), CAM_H), (120, 220, 120), -1)
-            y = tela.t(PAINEL_X, y + 10, "Segura parado...", 20, (120, 220, 120), negrito=True)
-        if self.aviso:
-            tela.t(PAINEL_X, y + 15, self.aviso, 18, (80, 180, 255), larg=LARG - PAINEL_X - 20)
-        faces = {f: [visao.cor_rapida(a) for a in v] for f, v in self.lidas.items()}
-        desenha_net(tela.img, faces, 20, CAM_H + 20, 18)
-
-    def _captura_auto(self, amos, palpite) -> float:
-        if amos is None or not visao.uniforme(self.frame):
-            self.parado_desde = self.ultimo = None
-            self.travado = None
-            return 0
-        # depois de capturar, só aceita outra quando a imagem mudar (cubo girou)
-        if self.travado is not None:
-            if palpite == self.travado:
-                return 0
-            self.travado = None
-        if palpite != self.ultimo:
-            self.ultimo, self.parado_desde = palpite, time.time()
-            return 0
-        prog = (time.time() - self.parado_desde) / 1.0
-        if prog >= 1:
-            self.parado_desde = self.ultimo = None
-            self.travado = palpite
-            self.captura()
-            return 0
-        return prog
-
-    def captura(self):
-        if self.frame is None:
+        if self.resultado:
+            self._aplica_resultado()
             return
-        face = ESCANEAR[len(self.lidas)][0]
-        amos = visao.amostras(self.frame)
-        centro = visao.cor_rapida(amos[4])
-        self.aviso = ""
-        if face == "U" and centro != "Y":
-            self.aviso = "O centro não parece amarelo. Se estiver certo, segue; se não, aperte BACKSPACE."
-        if face == "D" and centro != "W":
-            self.aviso = "O centro não parece branco. Se estiver certo, segue; se não, aperte BACKSPACE."
-        self.lidas[face] = amos
-        if len(self.lidas) == 6:
-            self.monta_cubo()
+        amos, pts = self.ler_face()
+        cores = [visao.cor_rapida(a) for a in amos] if amos else None
+        if amos and not self.montando:
+            self.acc.adiciona(amos)
+        self.desenha_camera(tela, pts, cores)
+        larg = LARG - PAINEL_X - 20
+        prontas = self.acc.prontas()
+        y = tela.t(PAINEL_X, 20, f"Mostre as 6 faces ({prontas} de 6)", 28, negrito=True)
+        y = tela.t(PAINEL_X, y + 10, "Em qualquer ordem, pode ir girando o cubo à vontade na frente da câmera. "
+                                     "Nas faces laterais, mantenha o amarelo em cima.", 20, larg=larg)
+        y = tela.t(PAINEL_X, y + 10, "BACKSPACE recomeça · M espelha · Q sai", 16, (150, 150, 150))
+        if self.aviso:
+            y = tela.t(PAINEL_X, y + 10, self.aviso, 18, (80, 180, 255), larg=larg)
+        if self.montando:
+            tela.t(PAINEL_X, y + 15, "Montando o cubo...", 22, (120, 220, 120), negrito=True)
+        cel = 22
+        for i, g in enumerate(self.acc.faces()):
+            x0 = 20 + i * (3 * cel + 40)
+            desenha_face(tela.img, [visao.cor_rapida(a.astype(np.uint8)) for a in g.media], x0, CAM_H + 30, cel)
+            prog = min(1.0, g.votos / leitura.MIN_VOTOS)
+            cor = (120, 220, 120) if prog >= 1 else (0, 200, 255)
+            cv2.rectangle(tela.img, (x0, CAM_H + 30 + 3 * cel + 8), (x0 + int(3 * cel * prog), CAM_H + 30 + 3 * cel + 16), cor, -1)
+        if prontas == 6 and not self.montando:
+            self.montando = True
+            faces = [g.media for g in self.acc.faces()]
+            threading.Thread(target=self._montar, args=(faces,), daemon=True).start()
 
-    def monta_cubo(self):
-        letras, certas, self.ref = visao.ler_cubo([self.lidas[f] for f in ORDEM_FACES])
-        self.corrigidos = {i for i, (a, b) in enumerate(zip(letras, certas)) if a != b}
+    def _montar(self, faces):
+        try:
+            self.resultado = leitura.montar(faces)
+        except Exception as e:
+            self.resultado = e
+
+    def _aplica_resultado(self):
+        res, self.resultado, self.montando = self.resultado, None, False
+        if isinstance(res, Exception):
+            self.aviso = f"Não consegui montar ({res}). Mostre as faces de novo."
+            self.acc = leitura.Acumulador()
+            return
+        cruas, certas, self.ref, self.frente = res
+        self.corrigidos = {i for i, (a, b) in enumerate(zip(cruas, certas)) if a != b}
         self.cubo = Cubo.de_texto(certas)
         self.revisar()
-        if not self.erros:
+        if len(self.corrigidos) > 8:
+            self.erros = [f"A câmera errou {len(self.corrigidos)} adesivos, é muita coisa. "
+                          "Confira a planificação ou aperte R para mostrar de novo com mais luz."]
+        elif not self.erros:
             self.inicio_auto = time.time() + 4
 
     # ---------- revisar ----------
@@ -318,10 +315,12 @@ class App:
         larg = LARG - PAINEL_X - 20
         fim = self.pos >= len(self.lista)
         esperado = self.estados[self.pos].face("F")
-        lida = None
-        if self.frame is not None and self.ref:
-            lida = [self.ref.cor(a) for a in visao.amostras(self.frame)]
-        self.desenha_camera(tela, lida)
+        lida, pts = None, None
+        if self.ref:
+            amos, pts = self.ler_face()
+            if amos:
+                lida = [self.ref.cor(a) for a in amos]
+        self.desenha_camera(tela, pts, lida)
         self._auto_avanco(lida)
 
         if fim:
@@ -345,6 +344,10 @@ class App:
                                    f"→/ESPAÇO próximo · ← volta · N/P etapa · A auto ({'ligado' if self.auto else 'desligado'}) "
                                    f"· O solução curta · Q sai", 15, (150, 150, 150), larg=larg)
 
+        if self.pos == 0 and self.cubo:
+            cor = NOME_COR.get(self.cubo.centro("F"), "")
+            tela.t(20, CAM_H - 40, f"Segure com o centro {cor} na frente e o amarelo em cima", 20,
+                   (255, 255, 255), negrito=True)
         y0 = CAM_H + 15
         tela.t(20, y0, "Frente esperada", 16, (170, 170, 170))
         desenha_face(tela.img, esperado, 20, y0 + 28, 34)
@@ -430,11 +433,8 @@ class App:
         if c == "m":
             self.espelho = not self.espelho
         if self.modo == "escanear":
-            if c == " ":
-                self.captura()
-            elif k == 8 and self.lidas:
-                self.lidas.pop(list(self.lidas)[-1])
-                self.aviso = ""
+            if k == 8:
+                self.reiniciar()
         elif self.modo == "revisar":
             if k == 13:
                 self.comecar_aula()
@@ -457,6 +457,7 @@ class App:
                 self.reiniciar()
 
     def reiniciar(self):
-        self.lidas, self.cubo, self.ref, self.aviso = {}, None, None, ""
+        self.acc, self.cubo, self.ref, self.aviso = leitura.Acumulador(), None, None, ""
+        self.montando, self.resultado = False, None
         self.corrigidos, self.inicio_auto = set(), None
         self.modo = "escanear"

@@ -6,7 +6,7 @@ Enquanto você mexe no cubo, a câmera confere a face da frente e avança sozinh
 
 ## Como funciona
 
-1. **Escanear**: mostre as 6 faces para a câmera, uma por vez (amarelo em cima).
+1. **Escanear**: vá mostrando as faces para a câmera, em qualquer ordem e sem precisar ficar parado. O programa acha o cubo na imagem, fotografa o tempo todo e junta as leituras de cada face. Nas faces laterais, amarelo em cima.
 2. **Conferir**: o programa monta a planificação e corrige sozinho leituras impossíveis (escolhe o cubo válido mais parecido com o que a câmera viu). A aula começa sozinha; se quiser, clique numa cor para trocar.
 3. **Aula**: 8 etapas do método de camadas, cada uma com o objetivo, a dica do passo atual, o giro e o porquê dele funcionar.
 
@@ -29,9 +29,8 @@ Na primeira vez que a solução curta é calculada, o pacote gera umas tabelas (
 
 | Tela | Tecla | Ação |
 |---|---|---|
-| Escanear | (nada) | segure a face parada ~1 s, captura sozinho |
-| | ESPAÇO | captura na hora |
-| | BACKSPACE | refaz a anterior |
+| Escanear | (nada) | só ir mostrando as faces |
+| | BACKSPACE | recomeça a leitura |
 | Conferir | clique | troca a cor do quadrado |
 | | ENTER | começa a aula |
 | Aula | → / ESPAÇO, ← | próximo / anterior |
@@ -42,6 +41,10 @@ Na primeira vez que a solução curta é calculada, o pacote gera umas tabelas (
 | | Q | sai |
 
 ## Detalhes técnicos
+
+- O detector acha os 9 adesivos em qualquer lugar da imagem (bordas + contornos + encaixe numa grade 3x3), mesmo com o cubo torto. Se não achar, usa um quadrado fixo no meio da tela.
+- Cada quadro nítido vira um voto. As leituras são agrupadas por face comparando as 9 cores com o brilho normalizado, então dá pra mostrar as faces em qualquer ordem e repetir.
+- No fim, o programa testa como as faces se encaixam (qual lateral fica do lado de qual e o giro do topo e da base) e fica com o cubo válido mais provável.
 
 - O cubo é modelado por adesivos com posição e normal 3D; cada giro é uma rotação de vetores.
 - As cores são classificadas usando os próprios centros do cubo como referência, com a restrição de 9 adesivos por cor (problema de atribuição resolvido com `scipy`).

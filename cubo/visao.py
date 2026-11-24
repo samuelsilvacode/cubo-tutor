@@ -42,6 +42,13 @@ def uniforme(frame: np.ndarray) -> bool:
     return max(desv) < 22
 
 
+def parece_face(amostras) -> bool:
+    """Evita ler parede ou fundo liso como se fosse uma face."""
+    hsv = cv2.cvtColor(np.array(amostras, np.uint8).reshape(1, -1, 3), cv2.COLOR_BGR2HSV)[0]
+    coloridos = (hsv[:, 1] > 80).sum()
+    return coloridos >= 4 and len({cor_rapida(a) for a in amostras}) >= 3
+
+
 def distancias(todas, centros, wb=None) -> np.ndarray:
     return np.linalg.norm(_lab(todas, wb)[:, None] - _lab(centros, wb)[None], axis=2)
 
