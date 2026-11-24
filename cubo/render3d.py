@@ -46,9 +46,10 @@ def _giro(mov: str):
 
 
 def desenhar(cubo: Cubo, mov: str | None, fase: float, tam: int = 380, fundo=(30, 30, 30),
-             rotulos: bool = False) -> np.ndarray:
+             rotulos: bool = False, vista: np.ndarray | None = None) -> np.ndarray:
     """Imagem tam x tam do cubo; se mov, a camada que gira está a `fase` (0..1) do caminho."""
     img = np.full((tam, tam, 3), fundo, np.uint8)
+    V = VISTA if vista is None else vista
     eixo = camada = None
     ang = 0.0
     if mov:
@@ -65,7 +66,7 @@ def desenhar(cubo: Cubo, mov: str | None, fase: float, tam: int = 380, fundo=(30
     centro = np.array([tam / 2, tam / 2 + tam * 0.03])
 
     def projeta(p):
-        v = VISTA @ p
+        v = V @ p
         k = f / (dist - v[2])
         return centro + np.array([v[0] * k, -v[1] * k]), v[2]
 
@@ -80,11 +81,11 @@ def desenhar(cubo: Cubo, mov: str | None, fase: float, tam: int = 380, fundo=(30
             w = np.cross(n, u)
             cfa = pv + n * 0.5
             canto = [cfa + (a * u + b * w) * 0.5 for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
-            nr = VISTA @ gira(n, pos)
+            nr = V @ gira(n, pos)
             if nr[2] <= 0.02:
                 continue
             pts3 = [gira(c, pos) for c in canto]
-            prof = np.mean([(VISTA @ p)[2] for p in pts3])
+            prof = np.mean([(V @ p)[2] for p in pts3])
             polis.append((prof, [projeta(p)[0] for p in pts3], CORPO))
             cor = pecas.get(pos, {}).get(tuple(int(x) for x in n))
             if cor:
@@ -94,7 +95,7 @@ def desenhar(cubo: Cubo, mov: str | None, fase: float, tam: int = 380, fundo=(30
     for _, pts, cor in sorted(polis, key=lambda x: x[0]):
         cv2.fillConvexPoly(img, np.round(np.array(pts)).astype(np.int32), cor, cv2.LINE_AA)
     if mov:
-        _seta(img, eixo, camada, _giro(mov)[2], projeta)
+        _seta(img, eixo, camada, _giro(mov)[2], projeta, V)
     if rotulos:
         _rotulo(img, projeta(np.array([0, 2.25, 0]))[0], "PRA CIMA")
         _rotulo(img, projeta(np.array([-0.2, -2.2, 1.6]))[0], "PRA VOCE")
@@ -108,13 +109,13 @@ def _rotulo(img, p, texto):
     cv2.putText(img, texto, (x, y), cv2.FONT_HERSHEY_DUPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
 
 
-def _seta(img, eixo, camada, total, projeta):
+def _seta(img, eixo, camada, total, projeta, V=VISTA):
     """Seta curva em volta da camada que gira, no sentido do giro."""
     n = eixo / np.linalg.norm(eixo)
     altura = 1.0 if camada is not None else 0.0
     # começa no lado da camada que está mais virado para quem olha
     perp = [np.array(v, float) for v in NORMAIS.values() if abs(np.dot(v, n)) < 0.5]
-    frente = max(perp, key=lambda v: (VISTA @ v)[2] + 0.3 * (VISTA @ v)[1])
+    frente = max(perp, key=lambda v: (V @ v)[2] + 0.3 * (V @ v)[1])
     raio = 2.05
     sentido = 1 if total > 0 else -1
     span = math.radians(150 if abs(total) > 2 else 85)

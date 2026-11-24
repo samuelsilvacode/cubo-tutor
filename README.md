@@ -10,6 +10,8 @@ Enquanto você mexe no cubo, a câmera confere a face da frente e avança sozinh
 2. **Conferir**: o programa monta a planificação e corrige sozinho leituras impossíveis (escolhe o cubo válido mais parecido com o que a câmera viu). A aula começa sozinha; se quiser, clique numa cor para trocar.
 3. **Aula**: 8 etapas do método de camadas, cada uma com o objetivo, a dica do passo atual, o giro e o porquê dele funcionar.
 
+**Modo espelho (tecla E):** depois da leitura, uma réplica 3D do cubo segue a posição dele na sua mão em tempo real. O programa acha a face virada para a câmera, descobre qual é pelas cores e calcula a rotação 3D pela perspectiva da grade (`solvePnP`). As faces escondidas aparecem com as cores certas porque o cubo inteiro já foi lido.
+
 Também mostra a solução mais curta (algoritmo de duas fases de Kociemba, ~20 giros) como curiosidade.
 
 ## Rodando
@@ -37,6 +39,7 @@ Na primeira vez que a solução curta é calculada, o pacote gera umas tabelas (
 | | N / P | próxima / anterior etapa |
 | | A | liga/desliga o avanço automático |
 | | O | mostra a solução curta |
+| Conferir / Aula | E | liga/desliga o modo espelho |
 | Todas | M | espelha a câmera |
 | | Q | sai |
 

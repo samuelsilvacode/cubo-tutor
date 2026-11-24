@@ -12,6 +12,7 @@ class Face:
     centros: np.ndarray  # 9 x 2, ordem de leitura (de pé)
     lado: float
     angulo: float
+    achado: list | None = None  # quais dos 9 vieram de adesivo achado na imagem
 
     def amostras(self, frame) -> list[np.ndarray]:
         r = max(2, int(self.lado * 0.22))
@@ -119,19 +120,28 @@ def achar_face(frame) -> Face | None:
         n = len(achados)
         if melhor is None or n > melhor[0]:
             centro = np.array((cx, cy)) + (mc * ex + ml * ey) * passo
-            melhor = (n, centro, ex, ey, passo, lado)
+            melhor = (n, centro, ex, ey, passo, lado, list(achados.values()))
     if melhor is None:
         return None
-    _, centro, ex, ey, passo, lado = melhor
+    _, centro, ex, ey, passo, lado, reais = melhor
     # azulejo, parede, papel: grade sem cor nenhuma não é face de cubo
     if not _tem_cor(frame, centro, ex, ey, passo):
         return None
     eixos =[(ex, ey), (ey, -ex), (-ex, -ey), (-ey, ex)]
     ex, ey = max(eixos, key=lambda e: e[1][1])
     centros = np.array([centro + (col * ex + lin * ey) * passo for lin in (-1, 0, 1) for col in (-1, 0, 1)])
+    # troca o ponto da grade pelo centro real do adesivo quando ele foi achado (guarda a perspectiva)
+    achado = [False] * 9
+    for i, c in enumerate(centros):
+        if reais:
+            d = [np.linalg.norm(r - c) for r in reais]
+            j = int(np.argmin(d))
+            if d[j] < passo * 0.35:
+                centros[i] = reais[j]
+                achado[i] = True
     if not _grade_confere(frame, centros, passo):
         return None
-    return Face(centros, lado, float(np.degrees(np.arctan2(ex[1], ex[0]))))
+    return Face(centros, lado, float(np.degrees(np.arctan2(ex[1], ex[0]))), achado)
 
 
 def _grade_confere(frame, centros, passo) -> bool:

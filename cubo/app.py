@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from . import detector, leitura, render3d, visao
+from .pose import Rastreador
 from .registro import Registro
 from .camadas import resolver
 from .modelo import Cubo, ORDEM_FACES, NOME_COR, validar
@@ -486,6 +487,31 @@ class App:
             else:
                 tela.t(550, y + 5, self.otimo_msg or "calculando...", 15)
 
+    def tela_espelho(self, tela: Tela):
+        """A réplica segue a posição do cubo na mão."""
+        cubo = self.estados[self.pos] if getattr(self, "estados", None) else self.cubo
+        amos, pts = self.ler_face()
+        lida = [self.ref.cor(a) for a in amos] if amos else None
+        self.desenha_camera(tela, pts, lida)
+        achou = lida is not None and self.rastreador.atualiza(
+            pts, lida, cubo, self.frame.shape[:2], self.espelho)
+        larg = LARG - PAINEL_X - 20
+        y = tela.t(PAINEL_X, 15, "Modo espelho", 26, negrito=True)
+        y = tela.t(PAINEL_X, y + 4, "Gire o cubo na mão: a réplica acompanha.", 18, (190, 190, 190), larg=larg)
+        tam = 500
+        img = render3d.desenhar(cubo, None, 0, tam, vista=self.rastreador.R)
+        x0 = PAINEL_X + (larg - tam) // 2
+        tela.img[y + 10:y + 10 + tam, x0:x0 + tam] = img
+        y += tam + 18
+        if achou:
+            cor = NOME_COR[cubo.centro(self.rastreador.face)]
+            tela.t(PAINEL_X, y, f"Vendo a face {cor} ({self.rastreador.acertos} de 9 quadrados batem)", 17,
+                   (120, 220, 120))
+        else:
+            tela.t(PAINEL_X, y, "Procurando o cubo...", 17, (170, 170, 170))
+        tela.t(PAINEL_X, ALT - 30, "E volta · M espelha a câmera · Q sai", 15, (150, 150, 150))
+        self.info.update(face_pose=self.rastreador.face if achou else None)
+
     def _auto_avanco(self, lida):
         if not self.auto or lida is None or self.pos >= len(self.lista):
             self.batidas = 0
@@ -535,6 +561,8 @@ class App:
                 self.tela_escanear(tela)
             elif self.modo == "revisar":
                 self.tela_revisar(tela)
+            elif self.modo == "espelho":
+                self.tela_espelho(tela)
             else:
                 self.tela_aula(tela)
             img = tela.final()
@@ -567,6 +595,13 @@ class App:
         c = chr(k).lower() if 0 <= k < 256 else ""
         if c == "m":
             self.espelho = not self.espelho
+        if c == "e" and self.cubo is not None and self.ref is not None:
+            if self.modo == "espelho":
+                self.modo = self.modo_antes
+            else:
+                self.modo_antes, self.modo = self.modo, "espelho"
+                self.rastreador = Rastreador()
+            return
         if self.modo == "escanear":
             if k == 8 and self.lidas:
                 self.lidas.pop(list(self.lidas)[-1])
