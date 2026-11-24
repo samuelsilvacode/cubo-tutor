@@ -181,7 +181,10 @@ class App:
         if f is not None:
             nit = detector.nitidez(self.frame, f)
             self.info["nitidez"] = round(nit)
-            if nit > 40:
+            # nitidez típica da sessão: quadro com menos da metade dela é borrão de movimento
+            self.nitidezes = (getattr(self, "nitidezes", []) + [nit])[-120:]
+            tipica = float(np.median(self.nitidezes))
+            if nit > max(500, 0.5 * tipica):
                 amos = f.amostras(self.frame)
                 self.info.update(fonte="detector", amostras=[a.tolist() for a in amos],
                                  cores="".join(visao.cor_rapida(a) for a in amos))
