@@ -36,34 +36,67 @@ def _quadrados(frame):
         if not area_img * 0.0003 < area < area_img * 0.05:
             continue
         (cx, cy), (w, h), ang = cv2.minAreaRect(c)
-        if min(w, h) == 0 or max(w, h) / min(w, h) > 1.4:
+        if min(w, h) == 0 or area / (w * h) < 0.75:
             continue
-        if area / (w * h) < 0.75:
+        razao = max(w, h) / min(w, h)
+        n = round(razao)
+        if n > 3 or abs(razao - n) > 0.3:
             continue
-        out.append((cx, cy, (w + h) / 2, ang))
+        if n == 1:
+            out.append((cx, cy, (w + h) / 2, ang))
+            continue
+        # cubo sem borda: peças da mesma cor lado a lado viram um retângulo só
+        unidade = min(w, h)
+        t = np.deg2rad(ang)
+        eixo = np.array([np.cos(t), np.sin(t)]) if w > h else np.array([-np.sin(t), np.cos(t)])
+        for k in range(n):
+            px, py = np.array((cx, cy)) + eixo * unidade * (k - (n - 1) / 2)
+            out.append((px, py, unidade, ang))
+    return _divide_blocos(out)
+
+
+def _divide_blocos(qs):
+    """Quadrado com o dobro do tamanho dos outros = 4 peças iguais juntas."""
+    if len(qs) < 3:
+        return qs
+    tipico = np.median([q[2] for q in qs])
+    out = []
+    for cx, cy, lado, ang in qs:
+        if abs(lado / tipico - 2) < 0.35:
+            t = np.deg2rad(ang)
+            ex, ey = np.array([np.cos(t), np.sin(t)]), np.array([-np.sin(t), np.cos(t)])
+            for a in (-0.5, 0.5):
+                for b in (-0.5, 0.5):
+                    px, py = np.array((cx, cy)) + (ex * a + ey * b) * lado / 2
+                    out.append((px, py, lado / 2, ang))
+        else:
+            out.append((cx, cy, lado, ang))
     return out
 
 
+ultimos_quadrados = 0
+
+
 def achar_face(frame) -> Face | None:
+    global ultimos_quadrados
     qs = _quadrados(frame)
-    if len(qs) < 6:
+    ultimos_quadrados = len(qs)
+    if len(qs) < 4:
         return None
     pts = np.array([(q[0], q[1]) for q in qs])
     lados = np.array([q[2] for q in qs])
     melhor = None
-    for i, (cx, cy, lado, ang) in enumerate(qs):
+    for cx, cy, lado, ang in qs:
         parecidos = np.abs(lados - lado) < lado * 0.3
         viz = pts[parecidos]
-        if len(viz) < 6:
+        if len(viz) < 4:
             continue
-        # passo da grade: distância até o vizinho mais próximo
         d = np.linalg.norm(viz - (cx, cy), axis=1)
         d = d[d > lado * 0.5]
         if not len(d):
             continue
-        passo = d.min()
-        if passo > lado * 1.6:
-            continue
+        # passo da grade; em cubo de corpo branco o vizinho mais perto pode estar a 2 casas
+        passo = d.min() if d.min() < lado * 1.6 else lado * 1.2
         t = np.deg2rad(ang)
         ex = np.array([np.cos(t), np.sin(t)])
         ey = np.array([-np.sin(t), np.cos(t)])
@@ -72,22 +105,39 @@ def achar_face(frame) -> Face | None:
         achados = {}
         for a, b, p in zip(u, v, viz):
             ia, ib = round(a), round(b)
-            if abs(ia) <= 1 and abs(ib) <= 1 and abs(a - ia) < 0.25 and abs(b - ib) < 0.25:
+            if abs(ia) <= 2 and abs(ib) <= 2 and abs(a - ia) < 0.25 and abs(b - ib) < 0.25:
                 achados[(ia, ib)] = p
-        if len(achados) >= 7 and (0, 0) in achados and (melhor is None or len(achados) > melhor[0]):
-            melhor = (len(achados), cx, cy, ex, ey, passo, lado, ang, achados)
+        cols = {k[0] for k in achados}
+        lins = {k[1] for k in achados}
+        # a grade só fica definida quando os achados cobrem 3 colunas e 3 linhas
+        if max(cols) - min(cols) != 2 or max(lins) - min(lins) != 2 or len(achados) < 4:
+            continue
+        mc, ml = min(cols) + 1, min(lins) + 1
+        n = len(achados)
+        if melhor is None or n > melhor[0]:
+            centro = np.array((cx, cy)) + (mc * ex + ml * ey) * passo
+            melhor = (n, centro, ex, ey, passo, lado)
     if melhor is None:
         return None
-    _, cx, cy, ex, ey, passo, lado, ang, achados = melhor
-    # deixa "de pé": o eixo y da grade é o que mais aponta para baixo na imagem
-    eixos = [(ex, ey), (ey, -ex), (-ex, -ey), (-ey, ex)]
+    _, centro, ex, ey, passo, lado = melhor
+    # azulejo, parede, papel: grade sem cor nenhuma não é face de cubo
+    if not _tem_cor(frame, centro, ex, ey, passo):
+        return None
+    eixos =[(ex, ey), (ey, -ex), (-ex, -ey), (-ey, ex)]
     ex, ey = max(eixos, key=lambda e: e[1][1])
-    centros = []
+    centros = [centro + (col * ex + lin * ey) * passo for lin in (-1, 0, 1) for col in (-1, 0, 1)]
+    return Face(np.array(centros), lado, float(np.degrees(np.arctan2(ex[1], ex[0]))))
+
+
+def _tem_cor(frame, centro, ex, ey, passo) -> bool:
+    h, w = frame.shape[:2]
+    coloridos = 0
     for lin in (-1, 0, 1):
         for col in (-1, 0, 1):
-            centros.append(np.array((cx, cy)) + (col * ex + lin * ey) * passo)
-    ang_pe = np.degrees(np.arctan2(ex[1], ex[0]))
-    return Face(np.array(centros), lado, ang_pe)
+            x, y = (centro + (col * ex + lin * ey) * passo).astype(int)
+            if 0 <= x < w and 0 <= y < h:
+                coloridos += cv2.cvtColor(frame[y:y + 1, x:x + 1], cv2.COLOR_BGR2HSV)[0, 0, 1] > 90
+    return coloridos >= 2
 
 
 def nitidez(frame, face: Face) -> float:

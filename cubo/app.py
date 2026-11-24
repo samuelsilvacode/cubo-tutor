@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from . import detector, leitura, visao
+from .registro import Registro
 from .camadas import resolver
 from .modelo import Cubo, ORDEM_FACES, NOME_COR, validar
 from .otimo import checar_pecas, resolver_curto, tabelas_prontas
@@ -123,6 +124,8 @@ class App:
         self.batidas = 0
         self.corrigidos: set[int] = set()
         self.inicio_auto = None
+        self.info: dict = {}
+        self.reg = Registro() if camera is not None else None
         if estado:
             self.cubo = Cubo.de_texto(estado)
             self.revisar()
@@ -142,11 +145,20 @@ class App:
         if self.frame is None:
             return None, None
         f = detector.achar_face(self.frame)
-        if f is not None and detector.nitidez(self.frame, f) > 40:
-            return f.amostras(self.frame), f.centros
+        self.info = {"quadrados": detector.ultimos_quadrados, "fonte": None}
+        if f is not None:
+            nit = detector.nitidez(self.frame, f)
+            self.info["nitidez"] = round(nit)
+            if nit > 40:
+                amos = f.amostras(self.frame)
+                self.info.update(fonte="detector", amostras=[a.tolist() for a in amos],
+                                 cores="".join(visao.cor_rapida(a) for a in amos))
+                return amos, f.centros
         if visao.uniforme(self.frame):
             amos = visao.amostras(self.frame)
             if visao.parece_face(amos):
+                self.info.update(fonte="grade", amostras=[a.tolist() for a in amos],
+                                 cores="".join(visao.cor_rapida(a) for a in amos))
                 pts = np.array([(x + w / 2, y + h / 2) for x, y, w, h in visao.grade(self.frame)])
                 return amos, pts
         return None, None
@@ -215,6 +227,9 @@ class App:
             self.acc = leitura.Acumulador()
             return
         cruas, certas, self.ref, self.frente = res
+        if self.reg:
+            self.reg.evento("montagem", cruas=cruas, certas=certas,
+                            medias=[[a.tolist() for a in g.media] for g in self.acc.faces()])
         self.corrigidos = {i for i, (a, b) in enumerate(zip(cruas, certas)) if a != b}
         self.cubo = Cubo.de_texto(certas)
         self.revisar()
@@ -322,6 +337,8 @@ class App:
                 lida = [self.ref.cor(a) for a in amos]
         self.desenha_camera(tela, pts, lida)
         self._auto_avanco(lida)
+        self.info.update(confere=(lida == esperado) if lida else None, giro=self.pos,
+                         esperado="".join(esperado), lida="".join(lida) if lida else None)
 
         if fim:
             y = tela.t(PAINEL_X, 20, "Cubo montado!", 34, (120, 220, 120), negrito=True)
@@ -416,7 +433,14 @@ class App:
                 self.tela_revisar(tela)
             else:
                 self.tela_aula(tela)
-            cv2.imshow("cubo-tutor", tela.final())
+            img = tela.final()
+            cv2.imshow("cubo-tutor", img)
+            if self.reg:
+                self.info["modo"] = self.modo
+                if self.modo == "escanear":
+                    self.info["grupos"] = [{"votos": g.votos, "cores": "".join(
+                        visao.cor_rapida(a.astype(np.uint8)) for a in g.media)} for g in self.acc.faces()]
+                self.reg.quadro(self.info, img, self.frame)
             k = cv2.waitKeyEx(15)
             if k == -1:
                 continue
@@ -425,6 +449,8 @@ class App:
             self.tecla(k)
         if self.cap:
             self.cap.release()
+        if self.reg:
+            self.reg.fecha()
         cv2.destroyAllWindows()
 
     def tecla(self, k):

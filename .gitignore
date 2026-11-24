@@ -4,3 +4,4 @@ __pycache__/
 # tabelas do solver ótimo (geradas na primeira execução, ~70 MB)
 twophase/
 *.png.tmp
+logs/
