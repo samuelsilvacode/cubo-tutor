@@ -28,6 +28,9 @@ def _quadrados(frame):
     cinza = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     cinza = cv2.GaussianBlur(cinza, (5, 5), 0)
     bordas = cv2.Canny(cinza, 20, 60)
+    # amarelo sobre corpo branco quase não tem contraste em cinza, mas tem muito em saturação
+    sat = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)[:, :, 1], (5, 5), 0)
+    bordas |= cv2.Canny(sat, 30, 90)
     bordas = cv2.dilate(bordas, np.ones((3, 3), np.uint8))
     global ultimas_bordas
     ultimas_bordas = bordas
