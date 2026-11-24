@@ -7,6 +7,8 @@ Dois modos que se completam:
 """
 from __future__ import annotations
 
+import time
+
 import cv2
 import numpy as np
 
@@ -49,6 +51,23 @@ def _pontos_adesivos():
 PONTOS, NORMAIS_P, ADESIVO = _pontos_adesivos()
 
 
+def _rotacoes_busca():
+    """Rotações para a busca do zero: várias direções de olhar e giros em volta delas."""
+    out = []
+    for yaw in range(0, 360, 30):
+        for pitch in (-60, -30, 0, 30, 60):
+            for roll in range(0, 360, 45):
+                a, b, c = np.radians([yaw, pitch, roll])
+                ry = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+                rx = np.array([[1, 0, 0], [0, np.cos(b), -np.sin(b)], [0, np.sin(b), np.cos(b)]])
+                rz = np.array([[np.cos(c), -np.sin(c), 0], [np.sin(c), np.cos(c), 0], [0, 0, 1]])
+                out.append(rz @ rx @ ry)
+    return out
+
+
+ROTACOES_BUSCA = _rotacoes_busca()
+
+
 class Rastreador:
     def __init__(self, suavizar: float = 0.5):
         self.R_cam: np.ndarray | None = None  # cubo -> câmera
@@ -61,6 +80,7 @@ class Rastreador:
         self.suavizar = suavizar
         self.mao = 0.0
         self.pontos_debug = None
+        self.ult_busca = 0.0
 
     # ---------- pose pela grade ----------
     def identifica(self, lida: list[str], cubo: Cubo):
@@ -135,14 +155,69 @@ class Rastreador:
         # nota só sobre o que dá pra ver (sem mão e sem fundo)
         return (bate - 0.5 * erra) / contam, contam
 
-    def pelo_modelo(self, frame, cubo: Cubo, ref: visao.Referencia, mao=None) -> bool:
-        if self.R_cam is None:
-            return False
+    def buscar(self, frame, cubo: Cubo, ref: visao.Referencia, mao=None, maos_pts=()) -> bool:
+        """Acha o cubo do zero, sem face de frente: procura perto da mão e testa várias rotações."""
+        if not maos_pts:
+            return False  # no modo espelho o cubo está na mão; sem mão, não procura (evita achar cubo na camisa)
         mapa = self._mapa_cores(frame, ref, mao)
+        local = self._onde_esta(frame, maos_pts)
+        if local is None:
+            return False
+        cx, cy, lado = local
+        K = _camera(frame.shape[:2])
+        z = K[0, 0] * 0.8 / lado  # adesivo tem ~0,8 da largura de uma peça
+        t = np.array([(cx - K[0, 2]) / K[0, 0] * z, (cy - K[1, 2]) / K[1, 1] * z, z])
         idx = {c: i for i, c in enumerate(ref.nomes)}
         esperado = np.array([idx.get(c, -2) for c in cubo.texto()])[ADESIVO]
-        K = _camera(frame.shape[:2])
-        R, t = self.R_cam, self.t.copy()
+        candidatos = []
+        for R in ROTACOES_BUSCA:
+            nota, _ = self._nota(R, t, mapa, esperado, K)
+            candidatos.append((nota, R))
+        candidatos.sort(key=lambda x: -x[0])
+        melhor = None
+        for nota0, R in candidatos[:6]:
+            R2, t2, nota = self._refina(R, t.copy(), mapa, esperado, K)
+            if melhor is None or nota > melhor[2]:
+                melhor = (R2, t2, nota)
+        R, t, nota = melhor
+        self.qualidade = nota
+        # o branco bate com parede; a posição só vale se as cores fortes também baterem
+        if nota < 0.5 or self._nota_cores_fortes(R, t, mapa, esperado, K, ref) < 0.5:
+            return False
+        self._nota(R, t, mapa, esperado, K, guardar=True)
+        self.R_cam, self.t, self.fonte = _ortonormal(R), t, "busca"
+        return True
+
+    def _onde_esta(self, frame, maos_pts):
+        """Centro e tamanho do adesivo do cubo: grupo de quadradinhos parecidos perto da mão."""
+        from .detector import _quadrados
+        qs = _quadrados(frame)
+        if len(qs) < 3:
+            return None
+        pts = np.vstack(maos_pts)
+        x0, y0 = pts.min(axis=0)
+        x1, y1 = pts.max(axis=0)
+        folga = max(x1 - x0, y1 - y0)
+        perto = [q for q in qs if x0 - folga < q[0] < x1 + folga and y0 - folga < q[1] < y1 + folga]
+        if len(perto) < 3:
+            return None
+        melhor = None
+        for cx, cy, lado, _ in perto:
+            grupo = [q for q in perto if abs(q[2] - lado) < lado * 0.35 and np.hypot(q[0] - cx, q[1] - cy) < lado * 4.5]
+            if melhor is None or len(grupo) > len(melhor):
+                melhor = grupo
+        if len(melhor) < 3:
+            return None
+        g = np.array([(q[0], q[1], q[2]) for q in melhor])
+        return float(g[:, 0].mean()), float(g[:, 1].mean()), float(np.median(g[:, 2]))
+
+    def _nota_cores_fortes(self, R, t, mapa, esperado, K, ref):
+        branco = ref.nomes.index("W") if "W" in ref.nomes else -9
+        fortes = np.where(esperado == branco, -2, esperado)
+        nota, n = self._nota(R, t, mapa, fortes, K)
+        return nota if n >= 15 else -1.0
+
+    def _refina(self, R, t, mapa, esperado, K):
         nota, _ = self._nota(R, t, mapa, esperado, K)
         passos = [(np.radians(8), 0.35), (np.radians(4), 0.18), (np.radians(2), 0.08), (np.radians(1), 0.04)]
         for passo_r, passo_t in passos:
@@ -161,6 +236,16 @@ class Rastreador:
                         n2, _ = self._nota(R2, t2, mapa, esperado, K)
                         if n2 > nota + 1e-6:
                             R, t, nota, melhorou = R2, t2, n2, True
+        return R, t, nota
+
+    def pelo_modelo(self, frame, cubo: Cubo, ref: visao.Referencia, mao=None) -> bool:
+        if self.R_cam is None:
+            return False
+        mapa = self._mapa_cores(frame, ref, mao)
+        idx = {c: i for i, c in enumerate(ref.nomes)}
+        esperado = np.array([idx.get(c, -2) for c in cubo.texto()])[ADESIVO]
+        K = _camera(frame.shape[:2])
+        R, t, nota = self._refina(self.R_cam, self.t.copy(), mapa, esperado, K)
         self._nota(R, t, mapa, esperado, K, guardar=True)
         self.qualidade = nota
         if nota < 0.35:
@@ -169,11 +254,19 @@ class Rastreador:
         return True
 
     # ---------- um quadro ----------
-    def atualiza(self, frame, centros, lida, cubo: Cubo, ref, espelho=False, mao=None) -> bool:
+    def atualiza(self, frame, centros, lida, cubo: Cubo, ref, espelho=False, mao=None, maos_pts=()) -> bool:
         ok = False
         if centros is not None and lida is not None:
             ok = self.pela_grade(centros, lida, cubo, frame.shape[:2])
         ok = self.pelo_modelo(frame, cubo, ref, mao) or ok
+        if not ok:
+            # perdeu (ou nunca achou): busca do zero, no máximo umas 4 vezes por segundo
+            agora = time.time()
+            if agora - self.ult_busca > 0.25:
+                self.ult_busca = agora
+                ok = self.buscar(frame, cubo, ref, mao, maos_pts)
+            if not ok:
+                self.R_cam = None
         if not ok:
             return False
         novo = CAM_PARA_TELA @ self.R_cam
