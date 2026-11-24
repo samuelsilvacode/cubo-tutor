@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw, ImageFont
 from . import detector, leitura, render3d, visao
 from .mao import Maos
 from .pose import ESCALA, Rastreador
+from .camera import Camera
 from .registro import Registro
 from .camadas import resolver
 from .modelo import Cubo, ORDEM_FACES, NOME_COR, validar
@@ -133,9 +134,7 @@ class App:
         self.fim = time.time() + duracao if duracao else None
         self.cap = None
         if camera is not None:
-            self.cap = cv2.VideoCapture(camera, cv2.CAP_DSHOW)
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self.cap = Camera(camera)
         self.espelho = True
         self.frame = None
         self.acc = leitura.Acumulador()
@@ -165,11 +164,9 @@ class App:
     def le_camera(self):
         if not self.cap:
             return None
-        ok, fr = self.cap.read()
-        if not ok:
+        fr = self.cap.ler()
+        if fr is None:
             return None
-        if fr.shape[1] > 1280:
-            fr = cv2.resize(fr, (1280, int(fr.shape[0] * 1280 / fr.shape[1])), interpolation=cv2.INTER_AREA)
         self.frame = fr
         return fr
 
@@ -492,14 +489,19 @@ class App:
 
     def tela_espelho(self, tela: Tela):
         """A réplica segue a posição do cubo na mão."""
-        cubo = self.estados[self.pos] if getattr(self, "estados", None) else self.cubo
-        amos, pts = self.ler_face()
+        cubo = self.cubo_espelho
+        self.n_quadro = getattr(self, "n_quadro", 0) + 1
+        seguindo = self.rastreador.fonte == "modelo" and self.rastreador.qualidade > 0.7
+        # com o modelo seguindo bem, a grade só recalibra a cada 3 quadros
+        if seguindo and self.n_quadro % 3:
+            amos, pts = None, None
+        else:
+            amos, pts = self.ler_face()
         lida = [self.ref.cor(a) for a in amos] if amos else None
         self.desenha_camera(tela, pts, lida)
         mao = None
         if self.frame is not None and self.maos.ok:
             # a mão muda menos que o cubo: o esqueleto roda a cada 2 quadros
-            self.n_quadro = getattr(self, "n_quadro", 0) + 1
             if self.n_quadro % 2 == 0 or not self.maos.maos:
                 self.maos.atualiza(self.frame)
             peq = (int(self.frame.shape[0] * ESCALA), int(self.frame.shape[1] * ESCALA))
@@ -509,8 +511,16 @@ class App:
         larg = LARG - PAINEL_X - 20
         y = tela.t(PAINEL_X, 15, "Modo espelho", 26, negrito=True)
         y = tela.t(PAINEL_X, y + 4, "Gire o cubo na mão: a réplica acompanha.", 18, (190, 190, 190), larg=larg)
+        if achou or self.rastreador.segurando():
+            self._detecta_giro(cubo)
         tam = 500
-        img = render3d.desenhar(cubo, None, 0, tam, vista=self.rastreador.R)
+        mov, fase, antes = None, 0.0, cubo
+        if self.animando:
+            mov, antes, t0 = self.animando
+            fase = min(1.0, (time.time() - t0) / 0.35)
+            if fase >= 1.0:
+                self.animando, mov, antes = None, None, cubo
+        img = render3d.desenhar(antes, mov, fase, tam, vista=self.rastreador.R)
         x0 = PAINEL_X + (larg - tam) // 2
         tela.img[y + 10:y + 10 + tam, x0:x0 + tam] = img
         y += tam + 18
@@ -524,12 +534,36 @@ class App:
         else:
             tela.t(PAINEL_X, y, "Pra começar, mostre uma face do cubo de frente pra câmera. "
                                 "Depois pode girar à vontade.", 18, (80, 180, 255), negrito=True, larg=larg)
+        if self.giros_feitos:
+            ult = self.giros_feitos[-1]
+            tela.t(PAINEL_X, y + 26, f"Giros vistos: {len(self.giros_feitos)} · último: {DESC.get(ult, ult)}", 18,
+                   (255, 210, 120), negrito=True, larg=larg)
         tela.t(PAINEL_X, ALT - 30, "E volta · M espelha a câmera · Q sai", 15, (150, 150, 150))
         self.info.update(face_pose=self.rastreador.face if achou else None,
                          qualidade=round(float(self.rastreador.qualidade), 2), fonte_pose=self.rastreador.fonte,
                          mao=round(self.rastreador.mao, 3), maos=len(self.maos.maos))
         if self.reg and self.frame is not None:
             self.reg.foto_espelho(self.frame, self.rastreador, self.maos, achou, img)
+
+    def _detecta_giro(self, cubo):
+        """Um giro de camada vale quando ele explica a imagem bem melhor que o estado atual por 3 quadros."""
+        mov, ganho = self.rastreador.melhor_giro(cubo)
+        if mov is None or ganho < 0.08:
+            self.giro_candidato, self.giro_vezes = None, 0
+            return
+        if mov == self.giro_candidato:
+            self.giro_vezes += 1
+        else:
+            self.giro_candidato, self.giro_vezes = mov, 1
+        if self.giro_vezes >= 3:
+            antes = cubo.copia()
+            cubo.aplica(mov)
+            self.rastreador.aceita_giro()
+            self.giros_feitos.append(mov)
+            self.animando = (mov, antes, time.time())
+            self.giro_candidato, self.giro_vezes = None, 0
+            if self.reg:
+                self.reg.evento("giro_visto", mov=mov, ganho=round(float(ganho), 3))
 
     def _auto_avanco(self, lida):
         if not self.auto or lida is None or self.pos >= len(self.lista):
@@ -620,6 +654,11 @@ class App:
             else:
                 self.modo_antes, self.modo = self.modo, "espelho"
                 self.rastreador = Rastreador()
+                base = self.estados[self.pos] if getattr(self, "estados", None) else self.cubo
+                self.cubo_espelho = base.copia()
+                self.giro_candidato, self.giro_vezes = None, 0
+                self.giros_feitos: list[str] = []
+                self.animando = None
                 if not hasattr(self, "maos"):
                     self.maos = Maos()
             return

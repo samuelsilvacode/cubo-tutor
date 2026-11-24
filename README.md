@@ -15,6 +15,8 @@ Enquanto você mexe no cubo, a câmera confere a face da frente e avança sozinh
 - **pela grade:** quando uma face aparece de frente, a pose sai da perspectiva dos 9 adesivos (`solvePnP`);
 - **pelo modelo:** entre um quadro e outro, a pose anterior é ajustada até as cores projetadas de todos os adesivos visíveis baterem com a imagem. Como o cubo inteiro já foi lido, isso funciona com quina e aresta viradas para a câmera.
 
+**Giro das camadas:** no modo espelho a réplica também gira a camada quando você gira. Quando a nota da pose cai, o programa testa os 18 giros possíveis e aplica o que fizer a imagem bater bem melhor por 3 quadros seguidos (comparando cada candidato já com a pose ajustada para ele). Num teste sintético com 10 giros aleatórios por rodada: 46/50 giros vistos na ordem certa sem dedos na frente, 36/50 com dedos desenhados por cima que não são reconhecidos como mão (`python tools/testa_giros.py`).
+
 A mão na frente do cubo não atrapalha: o esqueleto das mãos (MediaPipe Hands, 21 pontos por mão) aprende a cor da pele a cada quadro e recorta o contorno real dos dedos, que ficam fora da comparação de cores. O modelo da mão (`hand_landmarker.task`, ~8 MB) vai na pasta `modelos/`: baixe de https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task. Sem ele o programa funciona, só não ignora a mão.
 
 Num giro sintético de 360° (3° por quadro) ele rastreia 100% dos quadros, com erro mediano de 2 a 3°, em ~30 ms por quadro.

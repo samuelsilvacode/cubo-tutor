@@ -49,6 +49,7 @@ def _pontos_adesivos():
 
 
 PONTOS, NORMAIS_P, ADESIVO = _pontos_adesivos()
+GIROS = [f + s for f in "URFDLB" for s in ("", "'", "2")]
 
 
 def _rotacoes_busca():
@@ -83,6 +84,8 @@ class Rastreador:
         self.ult_busca = 0.0
         self.historico: list = []
         self.prever = True
+        self._ultimo = None
+        self.incerto = 0
 
     # ---------- pose pela grade ----------
     def identifica(self, lida: list[str], cubo: Cubo):
@@ -285,10 +288,51 @@ class Rastreador:
                          key=lambda x: x[2])
         self._nota(R, t, mapa, esperado, K, guardar=True)
         self.qualidade = nota
+        self._ultimo = (mapa, K, {c: i for i, c in enumerate(ref.nomes)})
         if nota < 0.35:
+            # nota despencou: pode ser um giro grande de camada, não perda do cubo.
+            # guarda a pose por alguns quadros para a detecção de giro decidir.
+            self.R_cam, self.t = _ortonormal(R), t
+            self.incerto += 1
             return False
+        self.incerto = 0
         self.R_cam, self.t, self.fonte = _ortonormal(R), t, "modelo"
         return True
+
+    def segurando(self) -> bool:
+        """Tem pose guardada (mesmo que incerta) para testar giros."""
+        return self.R_cam is not None and self._ultimo is not None
+
+    def aceita_giro(self):
+        """Depois de aplicar um giro, a pose incerta volta a valer."""
+        self.incerto = 0
+
+    def melhor_giro(self, cubo: Cubo):
+        """Qual dos 18 giros de camada faz a imagem bater melhor que o estado atual (e quanto melhor)."""
+        if self._ultimo is None or self.R_cam is None:
+            return None, 0.0
+        mapa, K, idx = self._ultimo
+
+        def nota(c):
+            esperado = np.array([idx.get(x, -2) for x in c.texto()])[ADESIVO]
+            return self._nota(self.R_cam, self.t, mapa, esperado, K)[0]
+
+        base = nota(cubo)
+        if base > 0.9:
+            return None, 0.0  # tudo batendo: ninguém girou camada (e não gasta tempo testando 18 giros)
+        brutos = sorted(((nota(cubo.copia().aplica(m)) - base, m) for m in GIROS), reverse=True)
+        if brutos[0][0] <= 0.03:
+            return None, 0.0
+        # comparação justa: a pose foi ajustada para o estado atual, então o candidato também ganha
+        # o ajuste dele antes de comparar (senão a pose "entorta" para explicar a imagem sem o giro)
+        melhor = (None, 0.0)
+        for _, m in brutos[:2]:
+            c = cubo.copia().aplica(m)
+            esperado = np.array([idx.get(x, -2) for x in c.texto()])[ADESIVO]
+            _, _, n = self._refina(self.R_cam, self.t.copy(), mapa, esperado, K)
+            if n - base > melhor[1]:
+                melhor = (m, n - base)
+        return melhor
 
     def _prevista(self):
         """Pose prevista para agora, seguindo a velocidade dos dois últimos quadros."""
@@ -311,6 +355,8 @@ class Rastreador:
             self.historico = (self.historico + [(time.time(), self.R_cam.copy(), self.t.copy())])[-2:]
         else:
             self.historico = []
+        if not ok and 0 < self.incerto <= 6:
+            return False  # segura a pose: a detecção de giro ainda pode explicar a queda
         if not ok:
             # perdeu (ou nunca achou): busca do zero, no máximo umas 4 vezes por segundo
             agora = time.time()
