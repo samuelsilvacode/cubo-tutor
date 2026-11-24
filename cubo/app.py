@@ -316,6 +316,8 @@ class App:
             self.estados.append(self.estados[-1].copia().aplica(m))
         self.pos = 0
         self.modo = "aula"
+        if self.reg:
+            self.reg.evento("aula", giros=len(self.lista))
         self.otimo, self.otimo_msg = None, ""
         threading.Thread(target=self._calc_otimo, daemon=True).start()
 
@@ -404,6 +406,8 @@ class App:
         if alvo is not None:
             self.batidas += 1
             if self.batidas >= 6:
+                if self.reg:
+                    self.reg.evento("avanco", de=self.pos, para=alvo)
                 self.pos = alvo
                 self.batidas = 0
         else:
@@ -486,6 +490,8 @@ class App:
                 self.reiniciar()
 
     def reiniciar(self):
+        if self.reg:
+            self.reg.evento("reinicio")
         self.acc, self.cubo, self.ref, self.aviso = leitura.Acumulador(), None, None, ""
         self.montando, self.resultado = False, None
         self.corrigidos, self.inicio_auto = set(), None
