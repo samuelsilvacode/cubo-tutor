@@ -493,8 +493,8 @@ class App:
         amos, pts = self.ler_face()
         lida = [self.ref.cor(a) for a in amos] if amos else None
         self.desenha_camera(tela, pts, lida)
-        achou = lida is not None and self.rastreador.atualiza(
-            pts, lida, cubo, self.frame.shape[:2], self.espelho)
+        achou = self.frame is not None and self.rastreador.atualiza(
+            self.frame, pts, lida, cubo, self.ref, self.espelho)
         larg = LARG - PAINEL_X - 20
         y = tela.t(PAINEL_X, 15, "Modo espelho", 26, negrito=True)
         y = tela.t(PAINEL_X, y + 4, "Gire o cubo na mão: a réplica acompanha.", 18, (190, 190, 190), larg=larg)
@@ -505,8 +505,10 @@ class App:
         y += tam + 18
         if achou:
             cor = NOME_COR[cubo.centro(self.rastreador.face)]
-            tela.t(PAINEL_X, y, f"Vendo a face {cor} ({self.rastreador.acertos} de 9 quadrados batem)", 17,
-                   (120, 220, 120))
+            como = "pela grade" if self.rastreador.fonte == "grade" else "pelas cores do cubo inteiro"
+            tela.t(PAINEL_X, y, f"Face {cor} mais virada pra câmera · rastreando {como} "
+                                f"({100 * max(0, self.rastreador.qualidade):.0f}% das cores batem)", 17,
+                   (120, 220, 120), larg=larg)
         else:
             tela.t(PAINEL_X, y, "Procurando o cubo...", 17, (170, 170, 170))
         tela.t(PAINEL_X, ALT - 30, "E volta · M espelha a câmera · Q sai", 15, (150, 150, 150))

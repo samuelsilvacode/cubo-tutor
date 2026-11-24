@@ -42,9 +42,39 @@ def test_rastreia_rotacao():
     for _ in range(60):
         R = _rot(rng.uniform(-30, 30), rng.uniform(-25, 25), rng.uniform(-20, 20))
         pts, lida, face = _cena(cubo, R, rng)
-        r = Rastreador(suavizar=1.0)
-        assert r.atualiza(pts, lida, cubo, (720, 1280))
+        r = Rastreador()
+        assert r.pela_grade(pts, lida, cubo, (720, 1280))
         assert r.face == face
-        ang = math.degrees(math.acos(np.clip((np.trace(r.R.T @ R) - 1) / 2, -1, 1)))
+        est = CAM_PARA_TELA @ r.R_cam
+        ang = math.degrees(math.acos(np.clip((np.trace(est.T @ R) - 1) / 2, -1, 1)))
         erros.append(ang)
     assert np.median(erros) < 5
+
+
+def cena_cubo(cubo, R_tela, dist=11.0, w=1280, h=720, rng=None):
+    """Imagem sintética do cubo inteiro numa pose (faces tortas, quinas), com fundo bagunçado."""
+    rng = rng or np.random.default_rng(0)
+    img = cv2.GaussianBlur(rng.integers(40, 160, (h, w, 3), dtype=np.uint8), (31, 31), 0)
+    R_cam = CAM_PARA_TELA @ R_tela
+    f = 0.75 * w
+    K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]], float)
+    t = np.array([0, 0, dist])
+    rv = cv2.Rodrigues(R_cam)[0]
+    real = {"W": (215, 220, 215), "Y": (35, 185, 230), "G": (70, 150, 25),
+            "B": (150, 70, 15), "R": (35, 35, 175), "O": (25, 80, 215)}
+    polis = []
+    for fc in "URFDLB":
+        n = np.array(grade_da_face(fc)[4][1], float)
+        if (R_cam @ n) @ -(R_cam @ (n * 1.5) + t) <= 0:
+            continue
+        u = np.array([n[1], n[2], n[0]])
+        v = np.cross(n, u)
+        corpo = [n * 1.5 + (a * u + b * v) * 1.5 for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+        polis.append((corpo, (20, 20, 20)))
+        for (pos, nn), cor in zip(grade_da_face(fc), cubo.face(fc)):
+            c = np.array(pos) + 0.5 * np.array(nn)
+            polis.append(([c + (a * u + b * v) * 0.44 for a, b in ((-1, -1), (1, -1), (1, 1), (-1, 1))], real[cor]))
+    for quad, cor in polis:
+        p, _ = cv2.projectPoints(np.array(quad, float), rv, t, K, None)
+        cv2.fillConvexPoly(img, p.reshape(-1, 2).astype(np.int32), cor, cv2.LINE_AA)
+    return img
