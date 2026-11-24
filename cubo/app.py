@@ -9,7 +9,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from . import detector, leitura, render3d, visao
-from .pose import Rastreador
+from .mao import Maos
+from .pose import ESCALA, Rastreador
 from .registro import Registro
 from .camadas import resolver
 from .modelo import Cubo, ORDEM_FACES, NOME_COR, validar
@@ -493,8 +494,13 @@ class App:
         amos, pts = self.ler_face()
         lida = [self.ref.cor(a) for a in amos] if amos else None
         self.desenha_camera(tela, pts, lida)
+        mao = None
+        if self.frame is not None and self.maos.ok:
+            self.maos.atualiza(self.frame)
+            peq = (int(self.frame.shape[0] * ESCALA), int(self.frame.shape[1] * ESCALA))
+            mao = self.maos.mascara(peq, ESCALA, self.frame)
         achou = self.frame is not None and self.rastreador.atualiza(
-            self.frame, pts, lida, cubo, self.ref, self.espelho)
+            self.frame, pts, lida, cubo, self.ref, self.espelho, mao)
         larg = LARG - PAINEL_X - 20
         y = tela.t(PAINEL_X, 15, "Modo espelho", 26, negrito=True)
         y = tela.t(PAINEL_X, y + 4, "Gire o cubo na mão: a réplica acompanha.", 18, (190, 190, 190), larg=larg)
@@ -512,7 +518,11 @@ class App:
         else:
             tela.t(PAINEL_X, y, "Procurando o cubo...", 17, (170, 170, 170))
         tela.t(PAINEL_X, ALT - 30, "E volta · M espelha a câmera · Q sai", 15, (150, 150, 150))
-        self.info.update(face_pose=self.rastreador.face if achou else None)
+        self.info.update(face_pose=self.rastreador.face if achou else None,
+                         qualidade=round(float(self.rastreador.qualidade), 2), fonte_pose=self.rastreador.fonte,
+                         mao=round(self.rastreador.mao, 3), maos=len(self.maos.maos))
+        if self.reg and self.frame is not None:
+            self.reg.foto_espelho(self.frame, self.rastreador, self.maos, achou, img)
 
     def _auto_avanco(self, lida):
         if not self.auto or lida is None or self.pos >= len(self.lista):
@@ -603,6 +613,8 @@ class App:
             else:
                 self.modo_antes, self.modo = self.modo, "espelho"
                 self.rastreador = Rastreador()
+                if not hasattr(self, "maos"):
+                    self.maos = Maos()
             return
         if self.modo == "escanear":
             if k == 8 and self.lidas:

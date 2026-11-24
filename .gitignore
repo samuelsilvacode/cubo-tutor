@@ -5,3 +5,5 @@ __pycache__/
 twophase/
 *.png.tmp
 logs/
+# modelo da mão do MediaPipe (baixado na primeira execução)
+modelos/

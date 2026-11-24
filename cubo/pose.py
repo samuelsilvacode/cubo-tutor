@@ -59,6 +59,8 @@ class Rastreador:
         self.qualidade = 0.0
         self.fonte = None
         self.suavizar = suavizar
+        self.mao = 0.0
+        self.pontos_debug = None
 
     # ---------- pose pela grade ----------
     def identifica(self, lida: list[str], cubo: Cubo):
@@ -93,16 +95,22 @@ class Rastreador:
         return True
 
     # ---------- pose pelo modelo ----------
-    def _mapa_cores(self, frame, ref: visao.Referencia):
+    def _mapa_cores(self, frame, ref: visao.Referencia, mao=None):
         peq = cv2.resize(frame, None, fx=ESCALA, fy=ESCALA, interpolation=cv2.INTER_AREA)
         h, w = peq.shape[:2]
         feats = visao._lab(peq.reshape(-1, 3), ref.wb)
         d = np.linalg.norm(feats[:, None] - ref.ref[None], axis=2)
         rotulo = d.argmin(axis=1)
-        rotulo[d.min(axis=1) > 90] = -1  # fundo, pele, sombra: não conta
+        rotulo[d.min(axis=1) > 90] = -1  # fundo, sombra: não conta
+        self.mao = 0.0
+        if mao is not None:
+            # dedo na frente do cubo não conta nem a favor nem contra
+            m = mao.reshape(-1)
+            rotulo[m] = -1
+            self.mao = float(m.mean())
         return rotulo.reshape(h, w)
 
-    def _nota(self, R, t, mapa, esperado, K):
+    def _nota(self, R, t, mapa, esperado, K, guardar=False):
         normal_cam = NORMAIS_P @ R.T
         p_cam = PONTOS @ R.T + t
         visivel = (normal_cam * -p_cam).sum(axis=1) > 0.05
@@ -119,12 +127,18 @@ class Rastreador:
         alvo = esperado[visivel][dentro]
         bate = (lido == alvo).sum()
         erra = ((lido != alvo) & (lido >= 0)).sum()
-        return (bate - 0.5 * erra) / len(alvo), len(alvo)
+        contam = int((lido >= 0).sum())
+        if guardar:
+            self.pontos_debug = (uv / ESCALA, np.where(lido == alvo, 1, np.where(lido >= 0, -1, 0)))
+        if contam < 10:
+            return -1.0, 0
+        # nota só sobre o que dá pra ver (sem mão e sem fundo)
+        return (bate - 0.5 * erra) / contam, contam
 
-    def pelo_modelo(self, frame, cubo: Cubo, ref: visao.Referencia) -> bool:
+    def pelo_modelo(self, frame, cubo: Cubo, ref: visao.Referencia, mao=None) -> bool:
         if self.R_cam is None:
             return False
-        mapa = self._mapa_cores(frame, ref)
+        mapa = self._mapa_cores(frame, ref, mao)
         idx = {c: i for i, c in enumerate(ref.nomes)}
         esperado = np.array([idx.get(c, -2) for c in cubo.texto()])[ADESIVO]
         K = _camera(frame.shape[:2])
@@ -147,6 +161,7 @@ class Rastreador:
                         n2, _ = self._nota(R2, t2, mapa, esperado, K)
                         if n2 > nota + 1e-6:
                             R, t, nota, melhorou = R2, t2, n2, True
+        self._nota(R, t, mapa, esperado, K, guardar=True)
         self.qualidade = nota
         if nota < 0.35:
             return False
@@ -154,11 +169,11 @@ class Rastreador:
         return True
 
     # ---------- um quadro ----------
-    def atualiza(self, frame, centros, lida, cubo: Cubo, ref, espelho=False) -> bool:
+    def atualiza(self, frame, centros, lida, cubo: Cubo, ref, espelho=False, mao=None) -> bool:
         ok = False
         if centros is not None and lida is not None:
             ok = self.pela_grade(centros, lida, cubo, frame.shape[:2])
-        ok = self.pelo_modelo(frame, cubo, ref) or ok
+        ok = self.pelo_modelo(frame, cubo, ref, mao) or ok
         if not ok:
             return False
         novo = CAM_PARA_TELA @ self.R_cam
