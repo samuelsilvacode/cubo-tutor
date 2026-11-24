@@ -115,9 +115,34 @@ class Rastreador:
         return True
 
     # ---------- pose pelo modelo ----------
-    def _mapa_cores(self, frame, ref: visao.Referencia, mao=None):
+    def _mapa_cores(self, frame, ref: visao.Referencia, mao=None, janela=None):
+        """Cor de cada pixel (índice do centro ou -1). Com janela (x0, y0, x1, y1), só calcula ali dentro."""
         peq = cv2.resize(frame, None, fx=ESCALA, fy=ESCALA, interpolation=cv2.INTER_AREA)
+        H, W = peq.shape[:2]
+        if janela is not None:
+            x0, y0, x1, y1 = janela
+            completo = np.full((H, W), -1, np.int64)
+            dentro = self._mapa_cores_bruto(peq[y0:y1, x0:x1], ref,
+                                           None if mao is None else mao[y0:y1, x0:x1])
+            completo[y0:y1, x0:x1] = dentro
+            return completo
+        return self._mapa_cores_bruto(peq, ref, mao)
+
+    def _janela(self, frame, R, t):
+        """Retângulo (na imagem reduzida) onde o cubo deve aparecer, com folga para o movimento."""
+        K = _camera(frame.shape[:2])
+        p = (PONTOS @ R.T + t) @ K.T
+        uv = p[:, :2] / p[:, 2:3] * ESCALA
+        H, W = int(frame.shape[0] * ESCALA), int(frame.shape[1] * ESCALA)
+        (x0, y0), (x1, y1) = uv.min(axis=0), uv.max(axis=0)
+        folga = 0.6 * max(x1 - x0, y1 - y0)
+        return (int(max(0, x0 - folga)), int(max(0, y0 - folga)),
+                int(min(W, x1 + folga)), int(min(H, y1 + folga)))
+
+    def _mapa_cores_bruto(self, peq, ref, mao):
         h, w = peq.shape[:2]
+        if h == 0 or w == 0:
+            return np.full((h, w), -1, np.int64)
         feats = visao._lab(peq.reshape(-1, 3), ref.wb)
         d = np.linalg.norm(feats[:, None] - ref.ref[None], axis=2)
         rotulo = d.argmin(axis=1)
@@ -241,7 +266,7 @@ class Rastreador:
     def pelo_modelo(self, frame, cubo: Cubo, ref: visao.Referencia, mao=None) -> bool:
         if self.R_cam is None:
             return False
-        mapa = self._mapa_cores(frame, ref, mao)
+        mapa = self._mapa_cores(frame, ref, mao, self._janela(frame, self.R_cam, self.t))
         idx = {c: i for i, c in enumerate(ref.nomes)}
         esperado = np.array([idx.get(c, -2) for c in cubo.texto()])[ADESIVO]
         K = _camera(frame.shape[:2])

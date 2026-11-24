@@ -134,6 +134,8 @@ class App:
         self.cap = None
         if camera is not None:
             self.cap = cv2.VideoCapture(camera, cv2.CAP_DSHOW)
+            # MJPG deixa a webcam mandar 720p sem travar o USB
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.espelho = True
@@ -168,6 +170,8 @@ class App:
         ok, fr = self.cap.read()
         if not ok:
             return None
+        if fr.shape[1] > 1280:
+            fr = cv2.resize(fr, (1280, int(fr.shape[0] * 1280 / fr.shape[1])), interpolation=cv2.INTER_AREA)
         self.frame = fr
         return fr
 
@@ -496,7 +500,10 @@ class App:
         self.desenha_camera(tela, pts, lida)
         mao = None
         if self.frame is not None and self.maos.ok:
-            self.maos.atualiza(self.frame)
+            # a mão muda menos que o cubo: o esqueleto roda a cada 2 quadros
+            self.n_quadro = getattr(self, "n_quadro", 0) + 1
+            if self.n_quadro % 2 == 0 or not self.maos.maos:
+                self.maos.atualiza(self.frame)
             peq = (int(self.frame.shape[0] * ESCALA), int(self.frame.shape[1] * ESCALA))
             mao = self.maos.mascara(peq, ESCALA, self.frame)
         achou = self.frame is not None and self.rastreador.atualiza(
