@@ -115,7 +115,7 @@ def _giros_provaveis(faces, centros, nomes):
     """Para uma nomeação dos centros, os giros das faces que fazem mais peças existirem."""
     wb = visao.balanco_branco(centros[nomes.index("W")])
     todas = [x for f in faces for x in f]
-    perto = visao.distancias(todas, centros, wb).argmin(axis=1)
+    perto = visao.distancias(todas, centros, wb, nomes).argmin(axis=1)
     letras = [[nomes[j] for j in perto[g * 9:(g + 1) * 9]] for g in range(6)]
     giradas = [[girar(np.array(letras[g]).reshape(9, 1), k).reshape(9).tolist() for k in range(4)]
                for g in range(6)]
@@ -141,7 +141,7 @@ def _escolhe(faces, candidatos):
         cs = [f[4] for f in lista]
         wb = visao.balanco_branco(cs[3])
         nomes_urf = [nomes[g] for g in ordem]
-        certas, custo = corrigir(visao.distancias(todas, cs, wb), nomes_urf, com_custo=True)
+        certas, custo = corrigir(visao.distancias(todas, cs, wb, nomes_urf), nomes_urf, com_custo=True)
         finais.append((custo, todas, cs, nomes_urf, wb, certas))
     _, todas, cs, nomes_urf, wb, certas = min(finais, key=lambda x: x[0])
     cruas = "".join(visao.classificar(todas, cs, nomes_urf, wb))

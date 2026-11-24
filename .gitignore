@@ -7,3 +7,5 @@ twophase/
 logs/
 # modelo da mão do MediaPipe (baixado na primeira execução)
 modelos/
+# calibração da webcam de quem usa
+calibracao/

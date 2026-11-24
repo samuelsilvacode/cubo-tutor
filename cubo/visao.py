@@ -1,6 +1,9 @@
 """Leitura das cores pela webcam."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import cv2
 import numpy as np
 from scipy.optimize import linear_sum_assignment
@@ -49,8 +52,18 @@ def parece_face(amostras) -> bool:
     return coloridos >= 4 and len({cor_rapida(a) for a in amostras}) >= 3
 
 
-def distancias(todas, centros, wb=None) -> np.ndarray:
-    return np.linalg.norm(_lab(todas, wb)[:, None] - _lab(centros, wb)[None], axis=2)
+def distancias(todas, centros, wb=None, nomes=None) -> np.ndarray:
+    d = np.linalg.norm(_lab(todas, wb)[:, None] - _lab(centros, wb)[None], axis=2)
+    if nomes is not None and "R" in nomes and "O" in nomes:
+        # a calibração decide entre vermelho e laranja
+        r, o = nomes.index("R"), nomes.index("O")
+        for i, bgr in enumerate(todas):
+            v = vermelho_ou_laranja(bgr, centros[r], centros[o])
+            if v == "R":
+                d[i, o] += 500
+            elif v == "O":
+                d[i, r] += 500
+    return d
 
 
 def cor_rapida(bgr: np.ndarray) -> str:
@@ -104,7 +117,7 @@ def nomear_centros(centros: list[np.ndarray]) -> list[str]:
 
 def classificar(todas, centros, nomes, wb=None) -> list[str]:
     """Classifica os 54 adesivos usando os centros como referência, 9 de cada cor."""
-    custo = np.repeat(distancias(todas, centros, wb), 9, axis=1)
+    custo = np.repeat(distancias(todas, centros, wb, nomes), 9, axis=1)
     lin, col = linear_sum_assignment(custo)
     out = [""] * len(todas)
     for i, j in zip(lin, col):
@@ -117,12 +130,17 @@ class Referencia:
 
     def __init__(self, centros, nomes, wb=None):
         self.wb = wb
+        self.centros = [np.array(c, float) for c in centros]
         self.ref = _lab(centros, wb)
         self.nomes = nomes
 
     def cor(self, bgr: np.ndarray) -> str:
         d = np.linalg.norm(self.ref - _lab([bgr], self.wb)[0], axis=1)
-        return self.nomes[int(np.argmin(d))]
+        c = self.nomes[int(np.argmin(d))]
+        if c in "RO" and "R" in self.nomes and "O" in self.nomes:
+            c = vermelho_ou_laranja(bgr, self.centros[self.nomes.index("R")],
+                                    self.centros[self.nomes.index("O")]) or c
+        return c
 
 
 # com amarelo em cima, as laterais em volta seguem essa ordem no esquema padrão
@@ -192,3 +210,53 @@ def confere_centro(pedida: str, centro, lidos: dict) -> tuple[str | None, str | 
                 f"que você mostrou antes. Talvez as duas estejam trocadas: mostre de novo a do centro "
                 f"{NOME_COR[par]}."), par
     return None, None
+
+
+# ---------- calibração do vermelho e do laranja (tools/calibrar.py) ----------
+CALIBRACAO = Path(__file__).resolve().parent.parent / "calibracao" / "cores.json"
+_limiar_cache: list = []
+
+
+def _proporcao_laranja(bgr) -> float:
+    """Quanto verde vem junto com o vermelho: separa laranja de vermelho mesmo com o vermelho estourado."""
+    b, g, r = np.array(bgr, float)
+    return (g - b) / max(r, 1.0)
+
+
+def _parece_vermelho_ou_laranja(bgr) -> bool:
+    b, g, r = np.array(bgr, float)
+    return r > 120 and r > 1.6 * g and r > 1.6 * b
+
+
+def limiar_vermelho_laranja() -> float | None:
+    if not _limiar_cache:
+        limiar = None
+        if CALIBRACAO.exists():
+            dados = json.loads(CALIBRACAO.read_text(encoding="utf8"))
+            vermelhos = [_proporcao_laranja(a) for a in dados.get("vermelho", []) if _parece_vermelho_ou_laranja(a)]
+            laranjas = [_proporcao_laranja(a) for a in dados.get("laranja", []) if _parece_vermelho_ou_laranja(a)]
+            if vermelhos and laranjas and max(vermelhos) < min(laranjas):
+                limiar = (max(vermelhos) + min(laranjas)) / 2
+        _limiar_cache.append(limiar)
+    return _limiar_cache[0]
+
+
+def vermelho_ou_laranja(bgr, centro_r=None, centro_o=None) -> str | None:
+    """'R' ou 'O' pela proporção de verde. O limite é o meio do caminho entre o centro vermelho
+    e o centro laranja da própria leitura (a webcam muda o brilho sozinha, então valor fixo não serve).
+    Sem os centros, usa o limite da calibração, se houver."""
+    if not _parece_vermelho_ou_laranja(bgr):
+        return None
+    if centro_r is not None and centro_o is not None:
+        pr, po = _proporcao_laranja(centro_r), _proporcao_laranja(centro_o)
+        if po - pr < 0.04:
+            return None  # centros parecidos demais: não dá pra confiar
+        limiar = (pr + po) / 2
+        # perto do meio não decide: deixa a comparação normal de cores resolver
+        if abs(_proporcao_laranja(bgr) - limiar) < 0.25 * (po - pr):
+            return None
+    else:
+        limiar = limiar_vermelho_laranja()
+        if limiar is None:
+            return None
+    return "O" if _proporcao_laranja(bgr) > limiar else "R"

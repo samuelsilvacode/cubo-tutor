@@ -70,4 +70,6 @@ São as cores que mais confundem com webcam e luz amarelada. O que o programa fa
 3. Usa os **centros do próprio cubo** como referência, então funciona com cubos de tons diferentes.
 4. A correção pelas peças desfaz o que ainda sobrar de erro.
 
+**Calibração do vermelho e do laranja** (`python tools/calibrar.py`): você mostra uma face com vermelho e sem laranja, depois uma com laranja e sem vermelho. Na webcam testada, os dois estouram o canal vermelho (255); o que separa é quanto verde vem junto (laranja tem 3 a 4 vezes mais). Como a webcam muda o brilho sozinha, o limite não é fixo: fica no meio do caminho entre o centro vermelho e o centro laranja de cada leitura, e só decide quando a peça está claramente de um lado. Repetindo 12 leituras reais, os adesivos corrigidos caíram de 55 para 29.
+
 Para medir: `python tools/estresse_cores.py 300` simula um cubo com vermelho e laranja próximos sob luz quente e exposição variando por face. Antes dessas mudanças: 27% dos cubos lidos 100% certos (72% com correção). Depois: 96% (100% com correção).
