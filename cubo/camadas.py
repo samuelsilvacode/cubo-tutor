@@ -123,7 +123,7 @@ def _margarida(g: _Gravador) -> None:
         alvo = _petalas(g.c) + 1
         seq = _busca(g.c, lambda c: _petalas(c) >= alvo, prof_max=4)
         g.faz(" ".join(seq), "Leve mais um meio branco para perto do amarelo, com o branco pra cima. "
-                             "Se a vaga estiver ocupada, gire o U antes para não derrubar uma pétala.")
+                             "Se a vaga estiver ocupada, gire o topo antes para não derrubar uma pétala.")
 
 
 def _busca(c: Cubo, objetivo, prof_max: int) -> list[str]:
@@ -139,7 +139,7 @@ def _busca(c: Cubo, objetivo, prof_max: int) -> list[str]:
 def _cruz_branca(g: _Gravador) -> None:
     g.etapa("Cruz branca",
             "Descer cada pétala para baixo, encaixada no centro da mesma cor.",
-            "Girando o U, a cor lateral da pétala fica em cima do centro igual. "
+            "Girando o topo, a cor lateral da pétala fica em cima do centro igual. "
             "O giro duplo desce a peça reto, sem tirar ela do lado desse centro.")
     u = NORMAIS["U"]
     while _petalas(g.c) > 0:
@@ -150,8 +150,8 @@ def _cruz_branca(g: _Gravador) -> None:
                 pos = _soma(u, NORMAIS[f])
                 if t.a[(pos, u)] == "W" and t.a[(pos, NORMAIS[f])] == t.centro(f):
                     nome = t.centro(f)
-                    g.faz(f"{s} {f}2", f"Gire o U até a pétala com {_nome(nome)} ficar em cima do centro "
-                                       f"{_nome(nome)}, depois faça {f}2 para descer.")
+                    g.faz(f"{s} {f}2", f"Gire o topo até a pétala com {_nome(nome)} ficar em cima do centro "
+                                       f"{_nome(nome)}, depois gire essa face duas vezes para descer.")
                     feito = True
                     break
             if feito:
@@ -161,7 +161,7 @@ def _cruz_branca(g: _Gravador) -> None:
 def _cantos_brancos(g: _Gravador) -> None:
     g.etapa("Cantos brancos",
             "Completar a face branca e fechar a primeira camada.",
-            "R U R' U' desce o canto, gira ele e devolve o que tirou do lugar. Repetido 6 vezes "
+            "A sequência desce o canto, gira ele e devolve o que tirou do lugar. Repetida 6 vezes "
             "volta tudo ao normal, então repetir até encaixar não estraga a cruz.")
     while _cantos_d_ok(g.c) < 4:
         cantos_topo = [(pos, ads) for pos, ads in g.c.pecas().items()
@@ -178,10 +178,10 @@ def _cantos_brancos(g: _Gravador) -> None:
                 t = _testa(g.c, s)
                 if t.acha(cores)[0] == (1, 1, 1):
                     break
-            g.faz(s, f"Gire o U até o canto {_nomes(cores)} ficar em cima da vaga (frente-direita).")
+            g.faz(s, f"Gire o topo até o canto {_nomes(cores)} ficar em cima da vaga (frente-direita).")
             vezes = 0
             while not _meio_resolvido(g.c, (1, -1, 1)):
-                g.faz(ALG_CANTO, "Repita R U R' U' até o canto encaixar com o branco pra baixo.")
+                g.faz(ALG_CANTO, "Repita a sequência até o canto encaixar com o branco pra baixo.")
                 vezes += 1
                 assert vezes <= 6
         else:
@@ -190,7 +190,7 @@ def _cantos_brancos(g: _Gravador) -> None:
                 if not _meio_resolvido(t, (1, -1, 1)):
                     break
             g.faz(y, "Gire o cubo para o canto branco preso ficar na frente-direita, embaixo.")
-            g.faz(ALG_CANTO, "Faça R U R' U' uma vez para tirar o canto de lá e levar ele pra cima.")
+            g.faz(ALG_CANTO, "Faça a sequência uma vez para tirar o canto de lá e levar ele pra cima.")
 
 
 def _segunda_camada(g: _Gravador) -> None:
@@ -217,7 +217,7 @@ def _segunda_camada(g: _Gravador) -> None:
         if achou:
             y, s, topo, t = achou
             g.faz(y, "Gire o cubo inteiro para trabalhar com outra face na frente.")
-            g.faz(s, f"Gire o U até o meio formar um T de cabeça pra baixo com o centro {_nome(t.centro('F'))}.")
+            g.faz(s, f"Gire o topo até o meio formar um T de cabeça pra baixo com o centro {_nome(t.centro('F'))}.")
             if topo == t.centro("R"):
                 g.faz(ALG_MEIO_DIR, f"A cor de cima é {_nome(topo)}, igual ao centro da direita: algoritmo da direita.")
             else:
@@ -234,7 +234,7 @@ def _segunda_camada(g: _Gravador) -> None:
 def _cruz_amarela(g: _Gravador) -> None:
     g.etapa("Cruz amarela",
             "Fazer uma cruz amarela em cima, sem se preocupar com as laterais.",
-            "F tira um pedaço da frente do caminho, R U R' U' vira os meios de cima e F' devolve "
+            "O primeiro giro tira um pedaço da frente do caminho, o meio vira os meios de cima e o último devolve "
             "a frente. As duas primeiras camadas voltam iguais.")
     voltas = 0
     while len(_amarelos_cruz(g.c)) < 4:
@@ -245,13 +245,13 @@ def _cruz_amarela(g: _Gravador) -> None:
             for s in SETUP_U:
                 a2 = _amarelos_cruz(_testa(g.c, s))
                 if a2 == {"L", "R"}:
-                    g.faz(s, "É uma linha: gire o U até ela ficar deitada (esquerda-direita).")
+                    g.faz(s, "É uma linha: gire o topo até ela ficar deitada (esquerda-direita).")
                     break
                 if a2 == {"B", "L"}:
-                    g.faz(s, "É um L: gire o U até as pontas ficarem para trás e para a esquerda.")
+                    g.faz(s, "É um L: gire o topo até as pontas ficarem para trás e para a esquerda.")
                     break
         nome = {0: "ponto", 2: "L ou linha"}.get(len(am), "")
-        g.faz(ALG_CRUZ, f"Faça F R U R' U' F' (formato atual: {nome}).")
+        g.faz(ALG_CRUZ, f"Faça a sequência da cruz (formato atual: {nome}).")
 
 
 def _alinha_cruz(g: _Gravador) -> None:
@@ -264,7 +264,7 @@ def _alinha_cruz(g: _Gravador) -> None:
         voltas += 1
         assert voltas < 6
         melhor = max(SETUP_U, key=lambda s: len(_alinhados_topo(_testa(g.c, s))))
-        g.faz(melhor, "Gire o U até o máximo de meios combinarem com os centros dos lados.")
+        g.faz(melhor, "Gire o topo até o máximo de meios combinarem com os centros dos lados.")
         al = _alinhados_topo(g.c)
         if len(al) == 4:
             return
@@ -275,7 +275,7 @@ def _alinha_cruz(g: _Gravador) -> None:
             if _alinhados_topo(_testa(g.c, y)) >= {"B", "R"}:
                 break
         g.faz(y, "Gire o cubo inteiro para os 2 meios certos ficarem atrás e à direita.")
-        g.faz(ALG_ALINHA, "Faça R U R' U R U2 R' U.")
+        g.faz(ALG_ALINHA, "Faça a sequência que troca os meios.")
 
 
 def _posiciona_cantos(g: _Gravador) -> None:
@@ -294,7 +294,7 @@ def _posiciona_cantos(g: _Gravador) -> None:
                 if _canto_no_lugar(_testa(g.c, y), (1, 1, 1)):
                     break
             g.faz(y, "Gire o cubo inteiro para o canto que já está no lugar ficar na frente-direita, em cima.")
-            g.faz(ALG_CANTOS_POS, "Faça U R U' L' U R' U' L.")
+            g.faz(ALG_CANTOS_POS, "Faça a sequência que gira os cantos em roda.")
         else:
             g.faz(ALG_CANTOS_POS, "Nenhum canto no lugar: faça o algoritmo uma vez e procure de novo.")
 
@@ -302,7 +302,7 @@ def _posiciona_cantos(g: _Gravador) -> None:
 def _vira_cantos(g: _Gravador) -> None:
     g.etapa("Virar cantos",
             "Virar os cantos amarelos pra cima e terminar o cubo.",
-            "R' D' R D feito 6 vezes volta tudo ao normal. Cada canto precisa de 2 ou 4, e o total "
+            "A sequência feita 6 vezes volta tudo ao normal. Cada canto precisa de 2 ou 4, e o total "
             "sempre dá múltiplo de 6. Por isso a bagunça de baixo se desfaz sozinha no fim.")
     ufr, u = (1, 1, 1), NORMAIS["U"]
     cantos = [(1, 1, 1), (-1, 1, 1), (1, 1, -1), (-1, 1, -1)]
@@ -310,14 +310,14 @@ def _vira_cantos(g: _Gravador) -> None:
     for _ in range(4 if falta else 0):
         n = 0
         while g.c.a[(ufr, u)] != "Y":
-            g.faz(ALG_CANTOS_VIRA, "Repita R' D' R D até o amarelo desse canto ficar pra cima. "
+            g.faz(ALG_CANTOS_VIRA, "Repita a sequência até o amarelo desse canto ficar pra cima. "
                                    "As camadas de baixo vão parecer bagunçadas: é normal.")
             n += 1
             assert n <= 4
-        g.faz("U", "Gire só o U para trazer o próximo canto para a frente-direita.")
+        g.faz("U", "Gire só o topo para trazer o próximo canto para a frente-direita.")
     for s in SETUP_U:
         if _testa(g.c, s).resolvido_ok():
-            g.faz(s, "Gire o U para alinhar a última camada.")
+            g.faz(s, "Gire o topo para alinhar a última camada.")
             break
 
 

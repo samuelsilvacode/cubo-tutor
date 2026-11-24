@@ -60,6 +60,10 @@ class Registro:
         ]
         if nq:
             partes.append(f"pecas_vistas_media={sum(nq) / len(nq):.1f}")
+        if j[-1].get("lidas") is not None:
+            partes.append(f"lidas={j[-1]['lidas'] or '-'} pedida={j[-1].get('pedida')}")
+        if j[-1].get("aviso"):
+            partes.append(f"aviso={j[-1]['aviso']}")
         if j[-1].get("grupos") is not None:
             partes.append("grupos=" + " ".join(f"{g['votos']}:{g['cores']}" for g in j[-1]["grupos"]))
         conf = [q["confere"] for q in j if q.get("confere") is not None]

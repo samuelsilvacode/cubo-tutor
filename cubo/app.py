@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from . import detector, leitura, visao
+from . import detector, leitura, render3d, visao
 from .registro import Registro
 from .camadas import resolver
 from .modelo import Cubo, ORDEM_FACES, NOME_COR, validar
@@ -28,6 +28,7 @@ DESC = {
     "y": "gire o cubo inteiro: a direita vem pra frente",
     "y'": "gire o cubo inteiro: a esquerda vem pra frente",
     "y2": "meia volta no cubo inteiro",
+    "U2": "cima 2 vezes",
 }
 
 PEDIR = "WYGBRO"
@@ -85,6 +86,30 @@ def quebra(s, f, larg):
                 atual = teste
         linhas.append(atual)
     return "\n".join(linhas)
+
+
+FACE_CAMERA = "B"
+
+
+def iguais(a, b) -> int:
+    return sum(x == y for x, y in zip(a, b))
+
+
+def posicao_errada(lida, esperado, cubo: Cubo) -> str | None:
+    """Diz como corrigir a posição do cubo na mão, olhando só o lado que a câmera vê."""
+    if iguais(lida, esperado) >= 7:
+        return None
+    if lida[4] != esperado[4]:
+        oposto = {cubo.centro(a): cubo.centro(b) for a, b in
+                  (("U", "D"), ("D", "U"), ("F", "B"), ("B", "F"), ("R", "L"), ("L", "R"))}
+        voce = NOME_COR[oposto[lida[4]]]
+        return (f"O centro {voce} está virado pra você. Vire o cubo até o centro "
+                f"{NOME_COR[cubo.centro('F')]} ficar virado pra você.")
+    for k in (1, 2, 3):
+        if iguais(np.rot90(np.array(lida).reshape(3, 3), k).reshape(9).tolist(), esperado) >= 8:
+            return (f"O cubo está girado de lado. Gire como um volante até o "
+                    f"{NOME_COR[cubo.centro('U')]} ficar pra cima.")
+    return None
 
 
 def desenha_face(img, cores, x, y, cel, borda=(20, 20, 20)):
@@ -352,6 +377,8 @@ class App:
             self.estados.append(self.estados[-1].copia().aplica(m))
         self.pos = 0
         self.modo = "aula"
+        self.posicionado = False
+        self.certo_desde = None
         if self.reg:
             self.reg.evento("aula", giros=len(self.lista))
         self.otimo, self.otimo_msg = None, ""
@@ -368,18 +395,52 @@ class App:
     def tela_aula(self, tela: Tela):
         larg = LARG - PAINEL_X - 20
         fim = self.pos >= len(self.lista)
-        esperado = self.estados[self.pos].face("F")
+        atual = self.estados[self.pos]
+        # a câmera vê o lado de trás: a frente do cubo fica virada para quem está montando
+        esperado = atual.face(FACE_CAMERA)
         lida, pts = None, None
         if self.ref:
             amos, pts = self.ler_face()
             if amos:
                 lida = [self.ref.cor(a) for a in amos]
         self.desenha_camera(tela, pts, lida)
-        self._auto_avanco(lida)
-        self.info.update(confere=(lida == esperado) if lida else None, giro=self.pos,
-                         esperado="".join(esperado), lida="".join(lida) if lida else None)
+        problema = posicao_errada(lida, esperado, atual) if lida else None
+        if self.posicionado:
+            self._auto_avanco(lida)
+        self.info.update(confere=(iguais(lida, esperado) >= 8) if lida else None, giro=self.pos,
+                         esperado="".join(esperado), lida="".join(lida) if lida else None,
+                         posicao=problema)
 
-        if fim:
+        frente, cima = NOME_COR[atual.centro("F")], NOME_COR[atual.centro("U")]
+        faixa = f"Centro {frente} virado pra você · {cima} pra cima"
+        cv2.rectangle(tela.img, (0, 0), (CAM_W, 44), (40, 90, 40) if not problema else (40, 40, 150), -1)
+        tela.t(14, 8, problema or faixa, 20, (255, 255, 255), negrito=True, larg=CAM_W - 28)
+
+        if not self.posicionado and not fim:
+            y = tela.t(PAINEL_X, 15, "Antes de começar, segure assim", 26, negrito=True)
+            y = tela.t(PAINEL_X, y + 6, f"O centro {frente.upper()} virado pra você e o {cima.upper()} pra cima. "
+                                        f"A câmera fica olhando o lado de trás (o centro "
+                                        f"{NOME_COR[atual.centro(FACE_CAMERA)]}).", 19, larg=larg)
+            tam = 330
+            img = render3d.desenhar(atual, None, 0, tam, rotulos=True)
+            x0 = PAINEL_X + (larg - tam) // 2
+            tela.img[y + 8:y + 8 + tam, x0:x0 + tam] = img
+            y += tam + 16
+            if lida is None:
+                tela.t(PAINEL_X, y, "Mostre o cubo pra câmera nessa posição.", 18, (170, 170, 170), larg=larg)
+                self.certo_desde = None
+            elif problema:
+                tela.t(PAINEL_X, y, problema, 18, (80, 180, 255), larg=larg)
+                self.certo_desde = None
+            else:
+                self.certo_desde = self.certo_desde or time.time()
+                tela.t(PAINEL_X, y, "Isso! Segura assim...", 20, (120, 220, 120), negrito=True)
+                if time.time() - self.certo_desde > 1.2:
+                    self.posicionado = True
+                    if self.reg:
+                        self.reg.evento("posicionado")
+            tela.t(PAINEL_X, ALT - 30, "ENTER pula esta etapa · Q sai", 15, (150, 150, 150))
+        elif fim:
             y = tela.t(PAINEL_X, 20, "Cubo montado!", 34, (120, 220, 120), negrito=True)
             tela.t(PAINEL_X, y + 10, f"{len(self.lista)} giros pelo método de camadas.\n"
                                      "← volta · R escaneia outro · Q sai", 20)
@@ -390,53 +451,55 @@ class App:
             y = tela.t(PAINEL_X, y + 2, e.objetivo, 18, (190, 190, 190), larg=larg)
             y = tela.t(PAINEL_X, y + 12, p.dica, 20, larg=larg)
             idx = sum(1 for k in range(self.pos) if self.lista[k][:2] == (ei, pi))
-            seq = "  ".join(f"[{mv}]" if k == idx else mv for k, mv in enumerate(p.movs))
-            y = tela.t(PAINEL_X, y + 12, seq, 22, (255, 210, 120), negrito=True, larg=larg)
-            y = tela.t(PAINEL_X, y + 12, m, 64, (255, 210, 120), negrito=True)
-            y = tela.t(PAINEL_X, y + 8, DESC.get(m, ""), 24, larg=larg)
-            y = tela.t(PAINEL_X, y + 12, "Por quê: " + e.porque, 16, (160, 160, 160), larg=larg)
+            y = tela.t(PAINEL_X, y + 6, f"movimento {idx + 1} de {len(p.movs)} desta sequência", 16, (170, 170, 170))
+            # réplica do cubo fazendo o giro, em loop: 1 s girando, 0,6 s parado no fim
+            t = time.time() % 1.6
+            fase = min(1.0, t / 1.0)
+            fase = fase * fase * (3 - 2 * fase)
+            tam = 330
+            img = render3d.desenhar(atual, m, fase, tam, rotulos=True)
+            x0 = PAINEL_X + (larg - tam) // 2
+            tela.img[y + 4:y + 4 + tam, x0:x0 + tam] = img
+            y = tela.t(PAINEL_X, y + tam + 8, DESC.get(m, "").capitalize(), 24, (255, 210, 120), negrito=True, larg=larg)
+            tela.t(PAINEL_X, y + 4, "Por quê: " + e.porque, 15, (160, 160, 160), larg=larg)
+            tela.t(PAINEL_X, ALT - 50, f"giro {self.pos + 1} de {len(self.lista)} · →/ESPAÇO próximo · ← volta · "
+                                       f"N/P etapa · A auto ({'ligado' if self.auto else 'desligado'}) · "
+                                       f"O solução curta · Q sai", 15, (150, 150, 150), larg=larg)
 
-        tela.t(PAINEL_X, ALT - 50, f"giro {min(self.pos + 1, len(self.lista))} de {len(self.lista)} · "
-                                   f"→/ESPAÇO próximo · ← volta · N/P etapa · A auto ({'ligado' if self.auto else 'desligado'}) "
-                                   f"· O solução curta · Q sai", 15, (150, 150, 150), larg=larg)
-
-        if self.pos == 0 and self.cubo:
-            cor = NOME_COR.get(self.cubo.centro("F"), "")
-            tela.t(20, CAM_H - 40, f"Segure com o centro {cor} na frente e o amarelo em cima", 20,
-                   (255, 255, 255), negrito=True)
         y0 = CAM_H + 15
-        tela.t(20, y0, "Frente esperada", 16, (170, 170, 170))
+        tela.t(20, y0, "A câmera deve ver", 16, (170, 170, 170))
         desenha_face(tela.img, esperado, 20, y0 + 28, 34)
         if lida:
-            ok = lida == esperado
-            tela.t(160, y0, "Câmera vê", 16, (170, 170, 170))
-            desenha_face(tela.img, lida, 160, y0 + 28, 34, (60, 200, 60) if ok else (40, 40, 200))
+            ok = iguais(lida, esperado) >= 8
+            tela.t(170, y0, "Câmera vê", 16, (170, 170, 170))
+            desenha_face(tela.img, lida, 170, y0 + 28, 34, (60, 200, 60) if ok else (40, 40, 200))
             tela.t(20, y0 + 145, "confere" if ok else "diferente do esperado", 16,
                    (120, 220, 120) if ok else (80, 180, 255))
         tela.t(330, y0, "Cubo inteiro agora", 16, (170, 170, 170))
-        atual = self.estados[self.pos]
         desenha_net(tela.img, {f: atual.face(f) for f in ORDEM_FACES}, 330, y0 + 28, 13)
 
         if self.mostra_otimo:
-            cv2.rectangle(tela.img, (PAINEL_X - 10, 520), (LARG - 10, 655), (55, 45, 30), -1)
-            y = tela.t(PAINEL_X, 528, "Solução mais curta (curiosidade)", 20, negrito=True)
+            cv2.rectangle(tela.img, (540, CAM_H + 10), (CAM_W, ALT - 10), (55, 45, 30), -1)
+            y = tela.t(550, CAM_H + 18, "Solução mais curta (curiosidade)", 17, negrito=True)
             if self.otimo:
-                tela.t(PAINEL_X, y + 5, f"{len(self.otimo)} giros: " + " ".join(self.otimo), 18, larg=larg)
+                tela.t(550, y + 5, f"{len(self.otimo)} giros: " + " ".join(self.otimo), 15, larg=CAM_W - 560)
             else:
-                tela.t(PAINEL_X, y + 5, self.otimo_msg or "calculando...", 18)
+                tela.t(550, y + 5, self.otimo_msg or "calculando...", 15)
 
     def _auto_avanco(self, lida):
         if not self.auto or lida is None or self.pos >= len(self.lista):
             self.batidas = 0
             return
         # olha alguns giros à frente: pega quem fez vários seguidos ou um giro que não muda a frente (B)
-        atual = self.estados[self.pos].face("F")
+        # aceita 1 quadrado diferente (vermelho/laranja oscilando), desde que a leitura
+        # se pareça mais com o giro seguinte do que com o estado atual
+        atual = self.estados[self.pos].face(FACE_CAMERA)
         alvo = None
         for k in range(1, 5):
             if self.pos + k >= len(self.estados):
                 break
-            f = self.estados[self.pos + k].face("F")
-            if f != atual and lida == f:
+            f = self.estados[self.pos + k].face(FACE_CAMERA)
+            if f != atual and iguais(lida, f) >= 8 and iguais(lida, f) > iguais(lida, atual):
                 alvo = self.pos + k
                 break
         if alvo is not None:
@@ -478,6 +541,7 @@ class App:
             cv2.imshow("cubo-tutor", img)
             if self.reg:
                 self.info["modo"] = self.modo
+                self.info["aviso"] = self.aviso
                 if self.modo == "escanear":
                     self.info["pedida"] = next((c for c in PEDIR if c not in self.lidas), None)
                     self.info["grupos"] = [{"votos": g.votos, "cores": "".join(
@@ -512,6 +576,8 @@ class App:
                 self.comecar_aula()
             elif c == "r":
                 self.reiniciar()
+        elif not self.posicionado and k == 13:
+            self.posicionado = True
         else:
             if c == " " or k in direita:
                 self.pos = min(self.pos + 1, len(self.lista))
