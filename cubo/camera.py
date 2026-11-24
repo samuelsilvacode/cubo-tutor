@@ -13,6 +13,8 @@ class Camera:
         self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.largura = largura
         self._quadro = None
+        self._numero = 0
+        self._entregue = -1
         self._trava = threading.Lock()
         self._rodando = True
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -28,10 +30,16 @@ class Camera:
                                 interpolation=cv2.INTER_AREA)
             with self._trava:
                 self._quadro = fr
+                self._numero += 1
 
     def ler(self):
+        """(quadro mais recente, se é novo desde a última leitura)."""
         with self._trava:
-            return None if self._quadro is None else self._quadro.copy()
+            if self._quadro is None:
+                return None, False
+            novo = self._numero != self._entregue
+            self._entregue = self._numero
+            return self._quadro.copy(), novo
 
     def release(self):
         self._rodando = False

@@ -137,6 +137,8 @@ class App:
             self.cap = Camera(camera)
         self.espelho = True
         self.frame = None
+        self.quadro_novo = True  # sem câmera (demo/testes) todo quadro conta como novo
+        self.inicio_face = None
         self.acc = leitura.Acumulador()
         self.lidas: dict[str, np.ndarray] = {}
         self.montando = False
@@ -164,7 +166,7 @@ class App:
     def le_camera(self):
         if not self.cap:
             return None
-        fr = self.cap.ler()
+        fr, self.quadro_novo = self.cap.ler()
         if fr is None:
             return None
         self.frame = fr
@@ -223,7 +225,8 @@ class App:
         larg = LARG - PAINEL_X - 20
         falta = [c for c in PEDIR if c not in self.lidas]
         pedida = falta[0] if falta else None
-        if amos and pedida and not self.montando:
+        # só vota com quadro novo da câmera (o app é mais rápido que a webcam e repetiria o mesmo quadro)
+        if amos and pedida and not self.montando and self.quadro_novo:
             self._le_pedida(np.array(amos, float), pedida)
 
         y = 20
@@ -260,8 +263,11 @@ class App:
             if any(leitura.diferenca(leitura.girar(amos, k), media) < leitura.MESMA_FACE for k in range(4)):
                 self.aviso = f"Essa é a face {NOME_COR[cor]}, que já foi lida. Mostre a do centro {NOME_COR[pedida]}."
                 return
+        if not self.acc.grupos:
+            self.inicio_face = time.time()
         g = self.acc.adiciona(amos)
-        if g.votos < leitura.MIN_VOTOS:
+        # precisa de votos suficientes e de pelo menos meio segundo de leitura parada
+        if g.votos < leitura.MIN_VOTOS or time.time() - (self.inicio_face or time.time()) < 0.5:
             return
         # só confere quando a leitura estabiliza, para não reclamar de quadro solto
         problema, refazer = visao.confere_centro(pedida, g.media[4], {c: m[4] for c, m in self.lidas.items()})
@@ -547,6 +553,8 @@ class App:
 
     def _detecta_giro(self, cubo):
         """Um giro de camada vale quando ele explica a imagem bem melhor que o estado atual por 3 quadros."""
+        if not self.quadro_novo:
+            return  # quadro repetido não conta como "mais um quadro seguido"
         mov, ganho = self.rastreador.melhor_giro(cubo)
         if mov is None or ganho < 0.08:
             self.giro_candidato, self.giro_vezes = None, 0
@@ -568,6 +576,8 @@ class App:
     def _auto_avanco(self, lida):
         if not self.auto or lida is None or self.pos >= len(self.lista):
             self.batidas = 0
+            return
+        if not self.quadro_novo:
             return
         # olha alguns giros à frente: pega quem fez vários seguidos ou um giro que não muda a frente (B)
         # aceita 1 quadrado diferente (vermelho/laranja oscilando), desde que a leitura
