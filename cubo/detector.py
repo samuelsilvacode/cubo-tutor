@@ -28,12 +28,14 @@ def _quadrados(frame):
     cinza = cv2.GaussianBlur(cinza, (5, 5), 0)
     bordas = cv2.Canny(cinza, 20, 60)
     bordas = cv2.dilate(bordas, np.ones((3, 3), np.uint8))
+    global ultimas_bordas
+    ultimas_bordas = bordas
     conts, _ = cv2.findContours(255 - bordas, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     area_img = frame.shape[0] * frame.shape[1]
     out = []
     for c in conts:
         area = cv2.contourArea(c)
-        if not area_img * 0.0003 < area < area_img * 0.05:
+        if not area_img * 0.0003 < area < area_img * 0.12:
             continue
         (cx, cy), (w, h), ang = cv2.minAreaRect(c)
         if min(w, h) == 0 or area / (w * h) < 0.75:
@@ -75,6 +77,7 @@ def _divide_blocos(qs):
 
 
 ultimos_quadrados = 0
+ultimas_bordas = None
 
 
 def achar_face(frame) -> Face | None:
@@ -125,8 +128,35 @@ def achar_face(frame) -> Face | None:
         return None
     eixos =[(ex, ey), (ey, -ex), (-ex, -ey), (-ey, ex)]
     ex, ey = max(eixos, key=lambda e: e[1][1])
-    centros = [centro + (col * ex + lin * ey) * passo for lin in (-1, 0, 1) for col in (-1, 0, 1)]
-    return Face(np.array(centros), lado, float(np.degrees(np.arctan2(ex[1], ex[0]))))
+    centros = np.array([centro + (col * ex + lin * ey) * passo for lin in (-1, 0, 1) for col in (-1, 0, 1)])
+    if not _grade_confere(frame, centros, passo):
+        return None
+    return Face(centros, lado, float(np.degrees(np.arctan2(ex[1], ex[0]))))
+
+
+def _grade_confere(frame, centros, passo) -> bool:
+    """Descarta grade deslocada (quadrado em cima da divisão) ou na escala errada
+    (dois vizinhos da mesma cor sem divisão entre eles = mesma peça)."""
+    h, w = frame.shape[:2]
+    m = max(2, int(passo * 0.3))
+    cores = []
+    for x, y in centros.astype(int):
+        p = frame[max(0, y - m):y + m, max(0, x - m):x + m].reshape(-1, 3).astype(float)
+        if len(p) == 0 or p.std(axis=0).mean() > 30:
+            return False
+        cores.append(np.median(p, axis=0))
+    c = centros.reshape(3, 3, 2)
+    sem_divisao = 0
+    for i in range(3):
+        for j in range(3):
+            for di, dj in ((0, 1), (1, 0)):
+                a, b = i + di, j + dj
+                if a > 2 or b > 2 or np.abs(cores[i * 3 + j] - cores[a * 3 + b]).max() > 40:
+                    continue
+                pontos = [(c[i, j] * (1 - t) + c[a, b] * t).astype(int) for t in np.linspace(0.3, 0.7, 9)]
+                if not any(0 <= y < h and 0 <= x < w and ultimas_bordas[y, x] for x, y in pontos):
+                    sem_divisao += 1
+    return sem_divisao < 5
 
 
 def _tem_cor(frame, centro, ex, ey, passo) -> bool:

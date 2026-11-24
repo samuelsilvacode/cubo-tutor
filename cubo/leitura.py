@@ -1,13 +1,14 @@
 """Junta leituras de vários quadros e monta o cubo no final."""
 from __future__ import annotations
 
-from itertools import permutations
+from itertools import permutations, product
 
 import cv2
 import numpy as np
 
 from . import visao
-from .correcao import corrigir
+from .correcao import INDICE, corrigir
+from .modelo import Cubo
 
 MIN_VOTOS = 6
 MESMA_FACE = 20
@@ -71,51 +72,82 @@ class Acumulador:
             self.grupos.remove(min(self.grupos[:-1], key=lambda x: x.votos))
         return g
 
+    def _junta_parecidos(self):
+        for i, a in enumerate(self.grupos):
+            for b in self.grupos[i + 1:]:
+                for k in range(4):
+                    if diferenca(girar(b.media, k), a.media) < MESMA_FACE:
+                        a.leituras += [girar(x, k) for x in b.leituras]
+                        a.leituras = a.leituras[-40:]
+                        self.grupos.remove(b)
+                        return True
+        return False
+
     def faces(self) -> list[Grupo]:
+        while self._junta_parecidos():
+            pass
         return sorted(self.grupos, key=lambda g: -g.votos)[:6]
 
     def prontas(self) -> int:
         return sum(1 for g in self.faces() if g.votos >= MIN_VOTOS)
 
 
-def _croma(bgr) -> tuple[float, float, float]:
-    L, a, b = _lab(np.array([bgr], float))[0]
-    return L, a, b
+# onde cada cor de centro fica, no esquema padrão (amarelo em cima, verde na frente)
+POSICAO = {"Y": "U", "O": "R", "G": "F", "W": "D", "R": "L", "B": "B"}
+_REF = Cubo.resolvido("YOGWRB")
+PECAS = [[INDICE[(pos, n)] for n in ads] for pos, ads in _REF.pecas().items() if len(ads) > 1]
+VALIDAS = {frozenset(ads.values()) for ads in _REF.pecas().values() if len(ads) > 1}
+
+
+def _nomeacoes(centros, quantas=6):
+    """Jeitos mais prováveis de dar nome às 6 cores de centro."""
+    ref = visao._lab([visao.BGR[c] for c in visao.CORES])
+    lab = visao._lab(centros)
+    custo = np.linalg.norm(lab[:, None] - ref[None], axis=2)
+    opcoes = []
+    for perm in permutations(range(6)):
+        opcoes.append((sum(custo[g, perm[g]] for g in range(6)), [visao.CORES[perm[g]] for g in range(6)]))
+    opcoes.sort(key=lambda x: x[0])
+    return opcoes[:quantas]
 
 
 def montar(faces: list[np.ndarray]):
-    """faces: 6 médias (9x3 BGR) em qualquer ordem. Acha qual é qual e devolve o cubo mais provável.
+    """faces: 6 médias (9x3 BGR), em qualquer ordem e giradas de qualquer jeito.
 
     Devolve (leitura crua, leitura corrigida, Referencia, cor do centro da frente).
     """
-    centros = [_croma(f[4]) for f in faces]
-    # branco: claro e pouco colorido (com luz amarelada ele fica creme, então o brilho pesa)
-    brancos = sorted(range(6), key=lambda i: -(2 * centros[i][0] - np.hypot(*centros[i][1:])))[:2]
+    centros = [f[4] for f in faces]
+    todas_g = [x for f in faces for x in f]
     candidatos = []
-    for br in brancos:
-        resto = [i for i in range(6) if i != br]
-        for am in sorted(resto, key=lambda i: -(centros[i][2] - centros[i][1]))[:2]:
-            candidatos.append((br, am))
+    for _, nomes in _nomeacoes(centros):
+        wb = visao.balanco_branco(centros[nomes.index("W")])
+        perto = visao.distancias(todas_g, centros, wb).argmin(axis=1)
+        letras = [[nomes[j] for j in perto[g * 9:(g + 1) * 9]] for g in range(6)]
+        giradas = [[girar(np.array(letras[g]).reshape(9, 1), k).reshape(9).tolist() for k in range(4)]
+                   for g in range(6)]
+        onde = {POSICAO[nomes[g]]: g for g in range(6)}
+        ordem = [onde[f] for f in "URFDLB"]
+        pontuados = []
+        for giros in product(range(4), repeat=6):
+            texto = [c for f, g in enumerate(ordem) for c in giradas[g][giros[f]]]
+            pontos = sum(frozenset(texto[i] for i in p) in VALIDAS for p in PECAS)
+            pontuados.append((pontos, giros))
+        top = max(p for p, _ in pontuados)
+        # empates vão todos para o desempate pela correção
+        candidatos += [(p, nomes, ordem, g) for p, g in pontuados if p == top][:8]
 
-    melhor = None
-    for branco, am in candidatos:
-        resto = [i for i in range(6) if i != branco]
-        lados = [i for i in resto if i != am]
-        frente = lados[0]
-        for r, b, l in permutations(lados[1:]):
-            for ku in range(4):
-                for kd in range(4):
-                    ordem = {"U": girar(faces[am], ku), "R": faces[r], "F": faces[frente],
-                             "D": girar(faces[branco], kd), "L": faces[l], "B": faces[b]}
-                    lista = [ordem[f] for f in "URFDLB"]
-                    todas = [x for f in lista for x in f]
-                    cs = [f[4] for f in lista]
-                    wb = visao.balanco_branco(cs[3])
-                    nomes = visao.nomes_dos_centros([np.clip(np.array(c) * wb, 0, 255) for c in cs])
-                    dist = visao.distancias(todas, cs, wb)
-                    certas, custo = corrigir(dist, nomes, com_custo=True)
-                    if melhor is None or custo < melhor[0]:
-                        melhor = (custo, todas, cs, nomes, wb, certas)
-    _, todas, cs, nomes, wb, certas = melhor
-    cruas = "".join(visao.classificar(todas, cs, nomes, wb))
-    return cruas, certas, visao.Referencia(cs, nomes, wb), nomes[2]
+    finais = []
+    top = max(c[0] for c in candidatos)
+    for pontos, nomes, ordem, giros in candidatos:
+        if pontos < top:
+            continue
+        lista = [girar(faces[g], giros[f]) for f, g in enumerate(ordem)]
+        todas = [x for f in lista for x in f]
+        cs = [f[4] for f in lista]
+        wb = visao.balanco_branco(cs[3])
+        nomes_urf = [nomes[g] for g in ordem]
+        certas, custo = corrigir(visao.distancias(todas, cs, wb), nomes_urf, com_custo=True)
+        finais.append((custo, todas, cs, nomes_urf, wb, certas))
+    _, todas, cs, nomes_urf, wb, certas = min(finais, key=lambda x: x[0])
+    cruas = "".join(visao.classificar(todas, cs, nomes_urf, wb))
+    return cruas, certas, visao.Referencia(cs, nomes_urf, wb), nomes_urf[2]

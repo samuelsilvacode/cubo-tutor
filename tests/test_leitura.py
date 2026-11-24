@@ -15,18 +15,18 @@ def _sessao(k, rng):
     acc = Acumulador()
     seq = list(ORDEM_FACES) * 3
     random.Random(k).shuffle(seq)
-    giro = {f: int(rng.integers(4)) for f in "UD"}
+    giro = {f: int(rng.integers(4)) for f in "URFDLB"}
     for f in seq:
         for _ in range(4):
             v = np.array([REAL[c] for c in alvo.face(f)], float) * tinta * rng.uniform(.85, 1.15)
             v = np.clip(v * rng.uniform(.95, 1.05, (9, 1)) + rng.normal(0, 5, (9, 3)), 0, 255)
-            acc.adiciona(girar(v, giro[f]) if f in "UD" else v)
+            acc.adiciona(girar(v, giro[f]))
         if rng.random() < 0.3:
             acc.adiciona(rng.uniform(0, 255, (9, 3)))
     return alvo, acc
 
 
-def test_faces_em_qualquer_ordem():
+def test_faces_em_qualquer_ordem_e_giradas():
     rng = np.random.default_rng(0)
     certos = 0
     for k in range(25):

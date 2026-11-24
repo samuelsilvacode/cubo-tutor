@@ -10,6 +10,7 @@ def main():
     ap.add_argument("--camera", type=int, default=0, help="índice da webcam (padrão 0)")
     ap.add_argument("--demo", action="store_true", help="sem câmera, com um cubo embaralhado aleatório")
     ap.add_argument("--estado", help="54 letras na ordem U R F D L B (W Y G B R O)")
+    ap.add_argument("--duracao", type=float, help="fecha sozinho depois de N segundos")
     args = ap.parse_args()
 
     if args.demo:
@@ -17,7 +18,7 @@ def main():
         print("embaralhamento:", mix)
         App(camera=None, estado=Cubo.resolvido().aplica(mix).texto()).rodar()
     else:
-        App(camera=args.camera, estado=args.estado).rodar()
+        App(camera=args.camera, estado=args.estado, duracao=args.duracao).rodar()
 
 
 if __name__ == "__main__":

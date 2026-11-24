@@ -100,7 +100,8 @@ def desenha_net(img, faces: dict[str, list[str]], x, y, cel):
 
 
 class App:
-    def __init__(self, camera: int | None = 0, estado: str | None = None):
+    def __init__(self, camera: int | None = 0, estado: str | None = None, duracao: float | None = None):
+        self.fim = time.time() + duracao if duracao else None
         self.cap = None
         if camera is not None:
             self.cap = cv2.VideoCapture(camera, cv2.CAP_DSHOW)
@@ -195,8 +196,8 @@ class App:
         larg = LARG - PAINEL_X - 20
         prontas = self.acc.prontas()
         y = tela.t(PAINEL_X, 20, f"Mostre as 6 faces ({prontas} de 6)", 28, negrito=True)
-        y = tela.t(PAINEL_X, y + 10, "Em qualquer ordem, pode ir girando o cubo à vontade na frente da câmera. "
-                                     "Nas faces laterais, mantenha o amarelo em cima.", 20, larg=larg)
+        y = tela.t(PAINEL_X, y + 10, "Em qualquer ordem e girando o cubo como quiser na frente da câmera. "
+                                     "O programa descobre sozinho onde fica cada face.", 20, larg=larg)
         y = tela.t(PAINEL_X, y + 10, "BACKSPACE recomeça · M espelha · Q sai", 16, (150, 150, 150))
         if self.aviso:
             y = tela.t(PAINEL_X, y + 10, self.aviso, 18, (80, 180, 255), larg=larg)
@@ -442,6 +443,8 @@ class App:
                         visao.cor_rapida(a.astype(np.uint8)) for a in g.media)} for g in self.acc.faces()]
                 self.reg.quadro(self.info, img, self.frame)
             k = cv2.waitKeyEx(15)
+            if self.fim and time.time() > self.fim:
+                break
             if k == -1:
                 continue
             if k in (ord("q"), 27) or cv2.getWindowProperty("cubo-tutor", cv2.WND_PROP_VISIBLE) < 1:
