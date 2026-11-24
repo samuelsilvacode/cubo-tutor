@@ -134,8 +134,6 @@ class App:
         self.cap = None
         if camera is not None:
             self.cap = cv2.VideoCapture(camera, cv2.CAP_DSHOW)
-            # MJPG deixa a webcam mandar 720p sem travar o USB
-            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         self.espelho = True
