@@ -15,6 +15,7 @@ pasta.mkdir(parents=True, exist_ok=True)
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 inicio, ultimo, n, achou = time.time(), 0, 0, 0
 while time.time() - inicio < segundos:
     ok, fr = cap.read()

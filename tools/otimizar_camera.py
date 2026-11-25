@@ -39,6 +39,7 @@ def separacao(amostras):
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 originais = {n: cap.get(p) for n, p in PROPS.items()}
 resultados = []
 combos = list(itertools.product(*OPCOES.values()))

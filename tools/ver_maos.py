@@ -12,6 +12,7 @@ from cubo.mao import Maos  # noqa: E402
 cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 maos = Maos()
 ultimo, fps = time.time(), 0.0
 while True:
