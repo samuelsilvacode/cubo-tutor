@@ -69,8 +69,10 @@ def para_usuario(p):
     return np.array([-p[0], -p[1], p[2]]) * espaco.CM_POR_PECA
 
 
-def desenha_vista(fr, face, ponto, K, nome, cor):
+def desenha_vista(fr, face, ponto, K, nome, cor, manchas=()):
     vis = fr.copy()
+    for x, y, lado, _ in manchas:
+        cv2.rectangle(vis, (int(x - lado / 2), int(y - lado / 2)), (int(x + lado / 2), int(y + lado / 2)), cor, 2)
     if face is not None:
         for x, y in face.centros.astype(int):
             cv2.circle(vis, (x, y), 10, cor, 3)
@@ -151,9 +153,30 @@ while time.time() - inicio < duracao:
                     u_, _, vt_ = np.linalg.svd(sum(q[1] for q in bons))
                     est.define(u_ @ vt_, np.mean([q[2] for q in bons], axis=0))
                     est.salva(**config)
-                print("calibrado e salvo", flush=True)
+                    print("calibrado e salvo", flush=True)
     pb_em_a = est.de_b_para_a(pb) if (pb is not None and est.pronto) else None
-    agora_a = espaco.escolhe(pa, pb_em_a, suave)
+    Ka, Kb = (espaco.camera_k(f.shape[:2], z) for f, z in zip(frames, zooms))
+    # sem precisar da grade: a mancha colorida do cubo em cada câmera, cruzada pela geometria das duas
+    manchas = [espaco.manchas_do_cubo(f) for f in frames] if est.pronto else [[], []]
+    par = espaco.melhor_par(manchas[0], manchas[1], Ka, Kb, est.R, est.t) if est.pronto else None
+    fonte = None
+    if par is not None:
+        agora_a, fonte = par[0], "triangulado"
+    else:
+        agora_a = espaco.escolhe(pa, pb_em_a, suave)
+        if agora_a is not None:
+            fonte = "pela face"
+        elif suave is not None and est.pronto and (manchas[0] or manchas[1]):
+            # só uma câmera vê um pedaço do cubo: direção dela, distância da última posição
+            if manchas[0]:
+                agora_a = espaco.no_raio(manchas[0][0][:2], Ka, np.linalg.norm(suave))
+                fonte = "so A (pedaco)"
+            else:
+                cb_ = est.posicao_b()
+                agora_a = espaco.no_raio(manchas[1][0][:2], Kb, np.linalg.norm(suave - cb_), cb_, est.R.T)
+                fonte = "so B (pedaco)"
+            if np.linalg.norm(agora_a - suave) > 8:
+                agora_a, fonte = None, None
     if agora_a is not None:
         suave = agora_a if suave is None or np.linalg.norm(agora_a - suave) > 4 else 0.6 * agora_a + 0.4 * suave
         rastro.append(para_usuario(suave))
@@ -164,10 +187,9 @@ while time.time() - inicio < duracao:
         if (pa is None and pb_em_a is None) or perdido > 15:
             suave = None
 
-    Ka, Kb = (espaco.camera_k(f.shape[:2], z) for f, z in zip(frames, zooms))
-    vista_a = desenha_vista(frames[0], fa, suave, Ka, "A (cima)", (80, 200, 255))
+    vista_a = desenha_vista(frames[0], fa, suave, Ka, "A (cima)", (80, 200, 255), manchas[0][:1])
     ponto_b = est.de_a_para_b(suave) if (suave is not None and est.pronto) else (pb if not est.pronto else None)
-    vista_b = desenha_vista(frames[1], fb, ponto_b, Kb, "B (baixo)", (120, 255, 120))
+    vista_b = desenha_vista(frames[1], fb, ponto_b, Kb, "B (baixo)", (120, 255, 120), manchas[1][:1])
 
     cams_mapa = [("A", np.zeros(3), (80, 200, 255))]
     if est.pronto:
@@ -183,8 +205,7 @@ while time.time() - inicio < duracao:
         status = f"calibrando ({len(seguidas)}/8): deixe o cubo parado, cada camera vendo uma face"
     cv2.putText(painel, status, (12, 34), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 1)
     if atual is not None:
-        quem = "as duas" if (pa is not None and pb_em_a is not None) else ("so A" if pa is not None else "so B")
-        txt = f"X {atual[0]:+6.1f} cm   Y {atual[1]:+6.1f} cm   Z {atual[2]:5.1f} cm   ({quem})"
+        txt = f"X {atual[0]:+6.1f} cm   Y {atual[1]:+6.1f} cm   Z {atual[2]:5.1f} cm   ({fonte or 'segurando'})"
         cv2.putText(painel, txt, (12, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (80, 230, 255), 2)
     else:
         cv2.putText(painel, "cubo nao encontrado", (12, 90), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (80, 80, 255), 2)
@@ -206,12 +227,15 @@ while time.time() - inicio < duracao:
         reg = {"t": round(t - inicio, 1), "a": None if pa is None else para_usuario(pa).round(1).tolist(),
                "b": None if pb is None else para_usuario(pb).round(1).tolist(),
                "b_em_a": None if pb_em_a is None else para_usuario(pb_em_a).round(1).tolist(),
-               "calibrado": est.pronto}
+               "calibrado": est.pronto, "fonte": fonte,
+               "tri": None if par is None else para_usuario(par[0]).round(1).tolist(),
+               "erro_px": None if par is None else round(par[1], 1)}
         dados.write(json.dumps(reg) + "\n")
         dados.flush()
         dif = (None if reg["a"] is None or reg["b_em_a"] is None
                else round(float(np.linalg.norm(np.subtract(reg["a"], reg["b_em_a"]))), 1))
-        print(f"t={reg['t']:5.1f} A={reg['a']} B={reg['b']} B->A={reg['b_em_a']} diferenca={dif}cm", flush=True)
+        print(f"t={reg['t']:5.1f} {fonte} tri={reg['tri']} ({reg['erro_px']} px) face A={reg['a']} "
+              f"B->A={reg['b_em_a']} diferenca={dif}cm", flush=True)
 
 if est.pronto:
     est.salva(**config)

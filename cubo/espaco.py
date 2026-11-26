@@ -235,16 +235,18 @@ def calibra_parado(fr_a, face_a, K_a, fr_b, face_b, K_b, cor_de):
 FAIXAS = {"R": ((0, 6), (170, 180)), "O": ((7, 19),), "Y": ((20, 35),), "G": ((36, 85),), "B": ((86, 130),)}
 
 
-def manchas_do_cubo(frame, escala: float = 0.5, sat_min: int = 150, min_cores: int = 2):
+def manchas_do_cubo(frame, escala: float = 0.5, sat_min: int = 185, min_cores: int = 2):
     """Candidatos a cubo: manchas com várias cores bem saturadas juntas.
     Devolve [(cx, cy, lado, n_cores)] em pixels do quadro, a melhor primeiro."""
     peq = cv2.resize(frame, None, fx=escala, fy=escala, interpolation=cv2.INTER_AREA)
     hsv = cv2.cvtColor(peq, cv2.COLOR_BGR2HSV)
     h, s, v = cv2.split(hsv)
-    forte = (s >= sat_min) & (v >= 90)
+    forte = (s >= sat_min) & (v >= 80)
+    # pele sob luz quente tem o mesmo tom do laranja e satura muito, mas é bem mais escura que o adesivo
+    forte &= ~((h >= 4) & (h <= 20) & (v < 170))
     mascara = forte.astype(np.uint8) * 255
     # adesivos vizinhos (e a divisão preta entre eles) viram uma mancha só
-    k = max(3, int(peq.shape[1] * 0.02)) | 1
+    k = max(3, int(peq.shape[1] * 0.03)) | 1
     junta = cv2.morphologyEx(mascara, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
     n, rot, stats, cent = cv2.connectedComponentsWithStats(junta)
     area_min = peq.shape[0] * peq.shape[1] * 0.002
@@ -294,3 +296,14 @@ def melhor_par(cands_a, cands_b, K_a, K_b, R, t, erro_max: float = 30.0):
             if melhor is None or erro < melhor[1]:
                 melhor = (p, erro, ca, cb)
     return melhor
+
+
+def no_raio(uv, K, distancia, origem=None, gira=None):
+    """Ponto na linha de visão de um pixel, a `distancia` da câmera. Para a câmera B,
+    origem e gira levam a linha para o espaço da A. Serve quando só uma câmera vê o cubo:
+    a direção vem dela e a distância, da última posição conhecida."""
+    d = np.linalg.inv(K) @ np.array([uv[0], uv[1], 1.0])
+    d /= np.linalg.norm(d)
+    if gira is not None:
+        d = gira @ d
+    return (np.zeros(3) if origem is None else np.asarray(origem, float)) + d * distancia

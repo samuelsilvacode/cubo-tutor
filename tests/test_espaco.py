@@ -76,3 +76,10 @@ def test_triangula_acha_o_ponto_e_recusa_par_errado():
     outro = pixel(R @ (p + [6, 0, 0]) + t) + [0, 80]
     par = espaco.melhor_par([(*pixel(p), 1, 3)], [(*outro, 1, 3), (*pixel(R @ p + t), 1, 3)], K, K, R, t)
     assert np.linalg.norm(par[0] - p) < 1e-3
+
+
+def test_no_raio_da_direcao_de_uma_camera_so():
+    K = espaco.camera_k((720, 1280))
+    p = np.array([3.0, -2.0, 20.0])
+    q = K @ p
+    assert np.allclose(espaco.no_raio(q[:2] / q[2], K, np.linalg.norm(p)), p)
